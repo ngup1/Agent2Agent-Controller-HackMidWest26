@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live transcription</title>
+  <style>
+    body {
+      max-width: 760px;
+      margin: 60px auto;
+      padding: 0 24px;
+      font: 17px/1.6 system-ui, sans-serif;
+    }
+    button { padding: 12px 20px; margin-right: 8px; cursor: pointer; }
+    #partial { color: #555; min-height: 50px; }
+    li { margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Live customer transcription</h1>
+  <p>Starting sends microphone audio to Deepgram for transcription.</p>
+
+  <button id="start">Start microphone</button>
+  <button id="stop" disabled>Stop</button>
+
+  <p id="status" role="status">Ready to start.</p>
+  <h2>Live text</h2>
+  <p id="partial"></p>
+  <h2>Completed turns</h2>
+  <ol id="turns"></ol>
+
+  <script>
+    const startButton = document.querySelector("#start");
+    const stopButton = document.querySelector("#stop");
+    const status = document.querySelector("#status");
+    const partial = document.querySelector("#partial");
+    const turns = document.querySelector("#turns");
+
+    let context, stream, source, processor, socket;
+    let closingTimer;
+    let stopping = false;
+    let failed = false;
+
+    async function releaseMicrophone() {
+      stream?.getTracks().forEach(track => track.stop());
+      source?.disconnect();
+      processor?.disconnect();
+
+      if (context && context.state !== "closed") {
+        await context.close();
+      }
+    }
+
+    startButton.onclick = async () => {
+      startButton.disabled = true;
+      stopping = false;
+      failed = false;
+      partial.textContent = "";
+      status.textContent = "Requesting microphone…";
+
+      try {
+        context = new AudioContext({ sampleRate: 16000 });
+        await context.resume();
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        await context.audioWorklet.addModule("/microphone.js");
+        source = context.createMediaStreamSource(stream);
+        processor = new AudioWorkletNode(context, "microphone-processor");
+
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        socket = new WebSocket(`${protocol}://${location.host}/audio`);
+
+        processor.port.onmessage = ({ data }) => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+
+          if (data === "flushed") {
+            socket.send(JSON.stringify({ type: "stop" }));
+          } else {
+            socket.send(data);
+          }
+        };
+
+        socket.onopen = () => {
+          status.textContent = "Connecting to Flux…";
+          socket.send(JSON.stringify({ sample_rate: context.sampleRate }));
+        };
+
+        socket.onmessage = ({ data }) => {
+          const message = JSON.parse(data);
+
+          if (message.type === "ready") {
+            source.connect(processor);
+            processor.connect(context.destination);
+            stopButton.disabled = false;
+            status.textContent = "Listening. Speak, then pause.";
+          } else if (message.type === "transcript.partial") {
+            partial.textContent = message.text;
+          } else if (message.type === "customer_turn.completed") {
+            const item = document.createElement("li");
+            item.textContent = message.text;
+            turns.appendChild(item);
+            partial.textContent = "";
+          } else if (message.type === "error") {
+            failed = true;
+            status.textContent = message.message;
+            socket.close();
+          }
+        };
+
+        socket.onerror = () => {
+          failed = true;
+          status.textContent = "Connection error. Check the Python terminal.";
+        };
+
+        socket.onclose = async () => {
+          clearTimeout(closingTimer);
+          await releaseMicrophone();
+          stopButton.disabled = true;
+          startButton.disabled = false;
+          if (!failed) {
+            status.textContent = stopping ? "Stopped." : "Connection closed.";
+          }
+        };
+      } catch (error) {
+        failed = true;
+        status.textContent = error.message;
+        socket?.close();
+        await releaseMicrophone();
+        startButton.disabled = false;
+        stopButton.disabled = true;
+      }
+    };
+
+    stopButton.onclick = async () => {
+      stopping = true;
+      stopButton.disabled = true;
+      status.textContent = "Finishing transcription…";
+
+      // Stop new audio, then flush the last buffered samples.
+      await context.suspend();
+      processor.port.postMessage("flush");
+      stream.getTracks().forEach(track => track.stop());
+
+      closingTimer = setTimeout(() => socket.close(), 8000);
+    };
+
+    window.addEventListener("beforeunload", () => {
+      stream?.getTracks().forEach(track => track.stop());
+      socket?.close();
+    });
+  </script>
+</body>
+</html>
