@@ -1,3 +1,5 @@
+import ssl
+import certifi
 import asyncio
 import json
 from contextlib import suppress
@@ -19,6 +21,7 @@ async def transcribe(browser, api_key: str, call_id: str, sample_rate: int):
     async with connect(
         url,
         additional_headers={"Authorization": f"Token {api_key}"},
+	ssl=ssl.create_default_context(cafile=certifi.where()),
         open_timeout=15,
         close_timeout=5,
     ) as flux:
