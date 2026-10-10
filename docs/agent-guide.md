@@ -13,7 +13,7 @@ This guide applies to Claude, Codex, and human contributors. It describes the ag
 
 `spec-2.md`, teaching material, and existing prototype code are supporting context, not substitutes for `spec.md`.
 
-The demo covers ten issues: SSA-001, 005, 008, 009, 010, 014, 015, 021, 022, and 023. Together they deliver one flow: a phone call, a booking proposal, a gate using rules, retrieved past incidents, and Jev, then either a booking or a staff review with a promised callback. Every other SSA issue is deferred or folded into one of these; see `spec.md` Section 16.2. Do not expand scope without a task requiring it.
+The demo covers eleven issues: SSA-001, 005, 008, 009, 010, 014, 015, 021, 022, 023, and 030. Together they deliver one flow: a spoken request (browser microphone first, then a phone call), a booking proposal, a gate using rules, similar past calls that staff decided, and Jev, then either a booking or a staff review with a promised callback. Every other SSA issue is deferred or folded into one of these; see `spec.md` Section 16.2. Do not expand scope without a task requiring it.
 
 ## Target structure
 
@@ -103,24 +103,24 @@ GitHub assignees are the source of truth. These are the demo lanes:
 | Lane | Responsibility | Issues |
 |---|---|---|
 | Foundation and deployment | Scaffold, schema, seed, Akamai, demo packaging | SSA-001, 021, 022 |
-| Phone | Twilio webhook and ConversationRelay WebSocket | SSA-023 |
+| Voice | Browser microphone first, then the Twilio webhook and ConversationRelay WebSocket | SSA-030, 023 |
 | Receptionist | Conversation service and the `propose_booking` tool | SSA-014 |
-| Evidence | Past-incident retrieval and the Jev decision | SSA-008, 009 |
+| Evidence | Precedent retrieval from staff-decided calls, and the Jev decision | SSA-008, 009 |
 | Gate and execution | Rules, gate composition, mock booking calendar | SSA-010, 005 |
 | Dashboard | Review queue, evidence, approve or reject | SSA-015 |
 
 Ownership coordinates changes; it does not prohibit necessary edits across folders.
 
-Only SSA-001 blocks other work. Agree the shared contracts in the spec's Demo scope section (booking proposal, action states, gate decision, `handle_turn`) before building in parallel, and build against fakes until a neighbouring lane lands. Coordinate migration changes with the SSA-001 owner.
+Only SSA-001 blocks other work. Agree the shared contracts in the spec's Demo scope section (booking proposal, gate decision, precedent rule, schema mapping, action states, `handle_turn`) before building in parallel, and build against fakes until a neighbouring lane lands. Coordinate migration changes with the SSA-001 owner.
 
 ## Reuse existing branches
 
 - Inspect `origin/databases` before integrating. Reuse its Akamai adapter and transcript repository where compatible; move the provider adapter into `backend/providers/` and split repositories only when needed.
 - Keep its plain SQL migrations for the demo. Do not modify a migration already applied to a shared environment; add a new numbered file.
-- Add only the demo tables (`services`, `slots`, `bookings`, `incidents`). Order/refund fields do not define the booking policy; ignore them.
+- Add only what `004_demo.sql` needs: `services`, `slots`, `bookings`, `interactions.callback_number`, and `business_policies.booking_rules`. Use the existing decision, state, and status values as they are (see "Schema mapping" in the spec's Demo scope section). Order/refund fields do not define the booking policy; ignore them.
 - Existing mocked tests do not prove real database constraints or successful live requests.
 - Preserve `spec.md` and other unrelated files when integrating branches; their trees omit current documentation.
-- Keep browser microphone work behind the shared conversation boundary (`handle_turn`). It is the fallback "call" if Twilio is not working by the time set in the spec's Demo scope section; it does not count as the phone path.
+- Keep browser microphone work behind the shared conversation boundary (`handle_turn`). It is the demo's first voice input (SSA-030). It does not count as the phone path, which is SSA-023.
 
 ## Required implementation rules *(deferred, except as kept by the spec's Demo scope section)*
 
@@ -158,4 +158,4 @@ SSA-001 must establish and document the executable install/run/test commands; do
 
 There is no separate regression issue for the demo; each issue carries a handful of its own tests.
 
-The demo is complete when the acceptance criteria of the ten issues are met: a real call (or the documented fallback) completes a routine booking, a flagged call lands on the dashboard and can be approved or rejected, live chat, embedding, and Jev calls are shown, and the deployed app persists a booking across a restart on the managed database. Keep missing live/cloud evidence explicit.
+The demo is complete when the acceptance criteria of the eleven issues are met: a spoken request (by browser microphone, and by phone if that path is finished) completes a routine booking, a flagged call lands on the dashboard and can be approved or rejected, live chat, embedding, and Jev calls are shown, and the deployed app persists a booking across a restart on the managed database. Keep missing live/cloud evidence explicit.
