@@ -1,6 +1,8 @@
 # Shared structure and implementation guide
 
-This guide applies to Claude, Codex, and human contributors implementing P0. It describes the agreed repository structure and collaboration rules. It does not mark any implementation complete.
+This guide applies to Claude, Codex, and human contributors. It describes the agreed repository structure and collaboration rules. It does not mark any implementation complete.
+
+**Demo scope.** Until the demo at 8:00 am CDT on 2026-10-11, the "Demo scope" section at the top of `spec.md` and its Section 16 catalog override anything in this guide that conflicts with them. Sections below marked *(deferred)* describe the full design and are not to be implemented now.
 
 ## Sources of truth
 
@@ -11,11 +13,13 @@ This guide applies to Claude, Codex, and human contributors implementing P0. It 
 
 `spec-2.md`, teaching material, and existing prototype code are supporting context, not substitutes for `spec.md`.
 
-P0 covers SSA-001 through SSA-022: supervised text booking, staff review, reviewed-incident retrieval, durable execution, validation, and Akamai deployment. Phone work is P1; optional connectors/cache/storage are P2. Do not expand scope without a task requiring it.
+The demo covers ten issues: SSA-001, 005, 008, 009, 010, 014, 015, 021, 022, and 023. Together they deliver one flow: a phone call, a booking proposal, a gate using rules, retrieved past incidents, and Jev, then either a booking or a staff review with a promised callback. Every other SSA issue is deferred or folded into one of these; see `spec.md` Section 16.2. Do not expand scope without a task requiring it.
 
 ## Target structure
 
 Create modules when their issues require them; this tree is a target, not a requirement to populate empty scaffolding immediately. Python package directories need `__init__.py` where appropriate.
+
+For the demo, skip `worker.py`, `auth/`, `mock_booking/`, `evaluation/`, `tests/regression/`, `tests/browser/`, and Alembic. The booking calendar is in-process in `backend/connectors/booking.py`, migrations are the plain SQL files from `origin/databases`, and the phone transport lives in `backend/api/voice.py`.
 
 ```text
 AGENTS.md
@@ -92,30 +96,35 @@ The spec's section 9.4 layout is suggested. We use `backend/database/` instead o
 
 Use the typed interfaces in spec section 9.3. Verify actual SDK operations rather than treating those internal names as vendor methods.
 
-## Five-person ownership
+## Ownership
 
-| Person | Primary responsibility | Issues |
+GitHub assignees are the source of truth. These are the demo lanes:
+
+| Lane | Responsibility | Issues |
 |---|---|---|
-| 1 | Foundation, database, CI, deployment, integration coordination | SSA-001, 003, 021, 022 |
-| 2 | Mock connector, immutable actions, confirmations, execution | SSA-005, 006, 011, 013 |
-| 3 | Provider verification, embeddings, Jev, retrieval evaluation | SSA-002, 008, 009, 019 |
-| 4 | Authentication, policy, gateway, limits/privacy; regression coordination | SSA-004, 007, 010, 020, 018 |
-| 5 | Review, conversation, dashboard, incident curation, audit visibility | SSA-012, 014, 015, 016, 017 |
+| Foundation and deployment | Scaffold, schema, seed, Akamai, demo packaging | SSA-001, 021, 022 |
+| Phone | Twilio webhook and ConversationRelay WebSocket | SSA-023 |
+| Receptionist | Conversation service and the `propose_booking` tool | SSA-014 |
+| Evidence | Past-incident retrieval and the Jev decision | SSA-008, 009 |
+| Gate and execution | Rules, gate composition, mock booking calendar | SSA-010, 005 |
+| Dashboard | Review queue, evidence, approve or reject | SSA-015 |
 
-Everyone contributes component tests to SSA-018. Person 1 helps Person 5 with backend audit instrumentation. Ownership coordinates changes; it does not prohibit necessary edits across folders.
+Ownership coordinates changes; it does not prohibit necessary edits across folders.
 
-Agree on action schemas/states, trusted tenant context, API contracts, provider interfaces, and transaction boundaries before parallel implementation. Coordinate migration changes with Person 1 and domain/execution contracts with Person 2. Follow issue dependencies before treating an integration as complete.
+Only SSA-001 blocks other work. Agree the shared contracts in the spec's Demo scope section (booking proposal, action states, gate decision, `handle_turn`) before building in parallel, and build against fakes until a neighbouring lane lands. Coordinate migration changes with the SSA-001 owner.
 
 ## Reuse existing branches
 
 - Inspect `origin/databases` before integrating. Reuse its Akamai adapter and transcript repository where compatible; move the provider adapter into `backend/providers/` and split repositories only when needed.
-- Its create-if-missing SQL is prototype groundwork. Introduce versioned migrations without assuming existing databases can be safely overwritten. Do not modify migrations already applied to a shared environment; add a new migration.
-- Extend existing governance tables for immutable versions, confirmations, authenticated review, dispatch claims, reconciliation, and curated incidents. Order/refund fields do not define the booking policy.
+- Keep its plain SQL migrations for the demo. Do not modify a migration already applied to a shared environment; add a new numbered file.
+- Add only the demo tables (`services`, `slots`, `bookings`, `incidents`). Order/refund fields do not define the booking policy; ignore them.
 - Existing mocked tests do not prove real database constraints or successful live requests.
 - Preserve `spec.md` and other unrelated files when integrating branches; their trees omit current documentation.
-- Keep browser microphone work behind the shared conversation boundary. Its print-only handoff and Deepgram connection do not satisfy the Twilio P1 requirements.
+- Keep browser microphone work behind the shared conversation boundary (`handle_turn`). It is the fallback "call" if Twilio is not working by the time set in the spec's Demo scope section; it does not count as the phone path.
 
-## Required implementation rules
+## Required implementation rules *(deferred, except as kept by the spec's Demo scope section)*
+
+For the demo, follow "Rules that still hold" in the spec's Demo scope section. The list below is the full design.
 
 - Persist consequential state in PostgreSQL; do not substitute in-memory workflow state or SQLite for required integration validation.
 - Validate and allowlist proposals strictly. Every executable agent proposal goes through the mandatory gateway.
@@ -130,7 +139,7 @@ Agree on action schemas/states, trusted tenant context, API contracts, provider 
 
 ## Frontend conventions
 
-Use server-rendered Jinja2 HTML and small same-origin JavaScript modules. A React build is not required. Implement customer chat, review queue/detail, action history, owner settings/pause, incident curation, and integration status as their issues become ready.
+Use server-rendered Jinja2 HTML and small same-origin JavaScript modules. A React build is not required. For the demo, implement only the review queue, the case page, the recent calls and bookings list, and the live/fake provider badges (SSA-015).
 
 Escape untrusted text, enforce authorization server-side, support keyboard access and small screens, and display readable states. Separate claimed facts from verified facts, review approval from execution success, and configured providers from successful live calls. Handle stale/conflicting submissions with a refresh path. Avoid an uncalibrated maliciousness percentage.
 
@@ -145,8 +154,8 @@ No visual palette or mockup is mandated by the spec. Agree on simple reusable st
 5. Record actual commands, results, and blockers in the PR. Explain the concrete behavior, link the SSA issue, and identify migration/configuration changes.
 6. Merge through the team's established review process and integrate frequently. Do not claim an issue complete while required checks or dependencies remain unresolved.
 
-SSA-001 must establish and document the executable install/run/lint/test commands; do not claim currently nonexistent commands work. Offline CI uses explicit fake providers and no paid requests. Live smoke calls and cloud operations follow the user's authorization and the spec's access requirements. Missing credentials are blockers, not successful tests.
+SSA-001 must establish and document the executable install/run/test commands; do not claim currently nonexistent commands work. Offline tests use explicit fake providers and no paid requests. Live smoke calls and cloud operations follow the user's authorization. Missing credentials are blockers, not successful tests.
 
-SSA-018 checks actual database and connector effects, including gateway bypass, cross-tenant access, stale approvals, revisions, concurrency, duplicates, unknown outcomes, and response disclosure. Each contributor supplies relevant scenarios; Person 4 coordinates coverage.
+There is no separate regression issue for the demo; each issue carries a handful of its own tests.
 
-P0 is complete only when the spec's release gate is satisfied: required deterministic tests pass on real PostgreSQL, live chat/embedding/Jev evidence exists, text review demonstrates a verified connector result, and Akamai runtime plus managed-database persistence are proven. Keep missing live/cloud evidence explicit.
+The demo is complete when the acceptance criteria of the ten issues are met: a real call (or the documented fallback) completes a routine booking, a flagged call lands on the dashboard and can be approved or rejected, live chat, embedding, and Jev calls are shown, and the deployed app persists a booking across a restart on the managed database. Keep missing live/cloud evidence explicit.
