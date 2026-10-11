@@ -19,6 +19,8 @@ class Settings:
     openai_api_key: str = field(default="", repr=False)
     chat_model: str = "hackathon-chat"
     embedding_model: str = "hackathon-embedding"
+    dashboard_password: str = field(default="", repr=False)
+    dashboard_preview: bool = False
     # Gate providers: "fake", "live", or "" (unset, which the gate escalates).
     retrieval_mode: str = ""
     jev_mode: str = ""
@@ -43,6 +45,8 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
+            dashboard_password=os.getenv("DASHBOARD_PASSWORD", ""),
+            dashboard_preview=os.getenv("DASHBOARD_PREVIEW", "").lower() in {"1", "true", "yes"},
             retrieval_mode=os.getenv("RETRIEVAL_MODE", "").strip().lower(),
             jev_mode=os.getenv("JEV_MODE", "").strip().lower(),
             typesafe_api_key=os.getenv("TYPESAFE_API_KEY", "").strip(),

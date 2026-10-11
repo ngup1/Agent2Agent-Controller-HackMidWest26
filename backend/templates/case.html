@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Case evidence · Staff dashboard{% endblock %}
+{% block heading %}Case evidence{% endblock %}
+{% block content %}
+<p><a href="/dashboard">← Back to review queue</a></p>
+<section><h2>{{ case.payload.customer_name or "Unnamed caller" }}</h2>
+<p>Action: <strong>{{ case.state }}</strong> · Review: <strong>{{ case.review_status or "No staff review" }}</strong> · Gate: {{ case.decision or "Not assessed" }}</p>
+<p class="muted">Call received {{ case.created_at|business_time }} · {{ case.channel }}<br>Action ID: {{ case.action_id }}</p>
+<h2>Why this case needs attention</h2>
+<ul>{% for reason in case.reasons or [] %}<li class="reason">{{ reason.code|reason_text }} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
+<div class="grid"><section><h2>Proposed booking</h2>
+<dl><dt>Service</dt><dd>{{ case.payload.service or "Not recorded" }}</dd>
+<dt>Requested time</dt><dd>{{ case.payload.start_time|business_time }}</dd>
+<dt>Party size</dt><dd>{{ case.payload.party_size or "Not recorded" }}</dd>
+<dt>Callback</dt><dd>{{ case.callback_number or case.payload.callback_number or "none captured" }}</dd></dl>
+<p class="muted">These details came from the caller. They are a proposal, not a booking confirmation.</p></section>
+<section><h2>Booking result</h2>
+{% if case.booking %}<p><strong>Booking recorded</strong></p><p>Reference: {{ case.booking.id }}<br>{{ case.booking.service }} · {{ case.booking.start_time|business_time }}<br>{{ case.booking.customer_name }} · Party of {{ case.booking.party_size }}</p>
+{% else %}<p>No booking record found.</p>
+{% if case.state == "failed" %}<p>Execution failed. No booking confirmation is available.</p>{% endif %}
+{% if case.review_status == "approved" %}<p>Staff approved the request, but approval alone does not confirm a booking.</p>{% endif %}{% endif %}
+{% if case.review_status == "pending" %}
+{% if preview %}<p class="notice">Preview is read only. Approve and deny require a connected database.</p><button disabled>Approve</button><button disabled>Deny</button>
+{% else %}
+<form id="decision-form" data-url="/dashboard/cases/{{ case.action_id }}/decision">
+<label for="review-note">Staff note (optional)</label>
+<textarea id="review-note" name="note" maxlength="2000" rows="3" style="display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem"></textarea>
+<button type="submit" value="approve">Approve and book</button>
+<button type="submit" value="deny">Deny</button>
+</form>
+<p id="decision-status" role="status" tabindex="-1" aria-live="polite"></p>
+<noscript>JavaScript is required to submit a staff decision.</noscript>
+{% endif %}{% endif %}
+{% if case.note %}<p>Staff note: {{ case.note }}</p>{% endif %}</section></div>
+<section><h2>Rule-by-rule checks</h2><div class="table-wrap"><table>
+<thead><tr><th scope="col">Rule</th><th scope="col">Limit</th><th scope="col">Actual</th><th scope="col">Result</th></tr></thead>
+<tbody>{% for check in case.checks %}<tr><td>{{ check.rule }}</td><td>{{ check.limit }}</td><td>{{ check.actual }}</td><td>{{ check.result|replace("_", " ") }}</td></tr>{% else %}<tr><td colspan="4">No rule checks recorded.</td></tr>{% endfor %}</tbody></table></div></section>
+<div class="grid"><section><h2>Jev assessment</h2>
+{% for reason in case.jev_reasons %}{% set evidence = reason.evidence or {} %}
+<p><strong>{{ reason.code|reason_text }}</strong></p>
+<dl><dt>Verdict</dt><dd>{{ evidence.verdict or "Not recorded" }}</dd>
+<dt>Confidence</dt><dd>{{ evidence.get("confidence")|percentage }}</dd>
+<dt>Mode</dt><dd>{{ evidence.mode or "Not recorded" }}</dd>
+<dt>Question</dt><dd>{{ evidence.question or "Not recorded" }}</dd></dl>
+{% else %}<p>{{ "Not checked: this request needs clarification before provider assessment." if case.providers_skipped else "No Jev assessment recorded." }}</p>{% endfor %}</section>
+<section><h2>Nearest precedents</h2><p class="muted">Nearest first. Similarity compares requests; it is not an attack probability. Approved precedents do not override rules.</p>
+{% for precedent in case.precedents %}<p><strong>{{ precedent.outcome|capitalize }} · Similarity {{ precedent.similarity|percentage }}</strong><br>{{ precedent.summary }}<br><span class="muted">Call: {{ precedent.interaction_id }}</span></p>
+{% else %}<p>{{ "Not checked: no retrieval was run for this clarification." if case.providers_skipped else "No precedents recorded." }}</p>{% endfor %}</section></div>
+<section><h2>Call transcript</h2><ul class="transcript">{% for segment in case.transcript %}<li><strong>{{ segment.speaker|replace("_", " ")|capitalize }}</strong><p>{{ segment.content }}</p></li>{% else %}<li>No transcript recorded.</li>{% endfor %}</ul></section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const form = document.getElementById("decision-form");
+  if (!form) return;
+  let submitting = false;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const decision = event.submitter?.value;
+    if (submitting || !["approve", "deny"].includes(decision)) return;
+    submitting = true;
+    form.querySelectorAll("button").forEach(button => button.disabled = true);
+    const status = document.getElementById("decision-status");
+    status.textContent = "Saving decision and checking the result…";
+    try {
+      const response = await fetch(form.dataset.url, {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({decision, note: document.getElementById("review-note").value}),
+        signal: AbortSignal.timeout(15000)
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        status.textContent = typeof result.detail === "string" ? result.detail : "Decision was not accepted. Reload the case and check your input.";
+        status.focus(); return;
+      }
+      window.location.assign(result.redirect);
+    } catch {
+      status.textContent = "The result could not be confirmed. Reload the case before trying again.";
+      status.focus();
+    }
+    // Never automatically retry a decision after an uncertain response.
+  });
+})();
+</script>
+{% endblock %}

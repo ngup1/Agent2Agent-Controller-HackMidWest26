@@ -87,6 +87,78 @@ unset, integration tests explicitly skip. No test makes paid inference calls.
 
 ## Shared lane contracts
 
+### SSA-015 dashboard checkpoint 3
+
+The Jinja2 shell is at `/dashboard`. Set `DASHBOARD_PASSWORD` in the server
+environment or a private `.env`, then restart Uvicorn. The browser's Basic Auth
+dialog accepts any username (use `staff`) and the configured shared password.
+An unset password disables the dashboard with HTTP 503; missing or wrong
+credentials return HTTP 401. Dashboard routes share a router-level password check.
+Use loopback for local development and HTTPS for any remote deployment.
+
+The dashboard reads up to 100 reviews (pending first, oldest pending first),
+the latest 20 calls, and the latest 20 bookings. Its queue refreshes every five
+seconds; history and case pages refresh on page reload. Case links use the action
+ID and show the transcript, proposal, rule checks, Jev evidence, precedents,
+callback number and persisted booking result.
+
+Case evidence follows the SSA-010 handoff: `policy_snapshot.checks`,
+`policy_snapshot.precedents`, `policy_snapshot.providers`, and the `JEV_`
+entries in `reasons`. Clarification cases show absent providers as not checked.
+Chat mode is not recorded in that contract, so it is explicitly shown as such.
+Provider modes are historical evidence, not proof of a successful live call.
+
+To try the UI without a database, set `DASHBOARD_PREVIEW=true` and restart the
+server. This is an explicit, synthetic, read-only preview with no database access.
+It includes a group review and a clarification case; the second is linked under
+recent calls. Turn preview off before database integration. Database errors
+return HTTP 503 with a safe message and never fall back to synthetic records.
+
+In database mode, pending cases offer Approve and book / Deny with an optional
+staff note. Both POST through the protected dashboard router. Approval and the
+SSA-005 booking connector share one transaction, holding the action and review
+locks until commit. Denial records `denied` and `rejected` without execution.
+An identical repeat is a no-op; a conflicting later decision returns HTTP 409.
+The page reloads persisted evidence after submission and only shows a booking
+confirmation when a booking row exists. Uncertain responses require a manual
+reload, never an automatic decision retry.
+
+The connector files were reused unchanged from `origin/main` at `961801c`
+(SSA-005, PR #30), without merging unrelated lanes over local dashboard edits.
+The gate is a separate integration dependency: a pending review must already
+exist before the dashboard can decide it.
+
+Validation: all 57 tests passed against the local Compose PostgreSQL/pgvector
+container, including all ten database tests. The dashboard database tests
+cover approval, denial, concurrent approval and rollback on execution error, plus
+readback through the dashboard queries. They use isolated temporary schemas;
+do not point them at a shared live database. Cloud integration, live providers,
+and a browser click-through with persisted reviews remain unverified.
+For PowerShell, explicitly configure the local test target before running tests:
+
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql://demo:demo@127.0.0.1:5432/demo'
+.\.venv\Scripts\python.exe -m pytest -q -rs
+```
+
+Starting the database alone does not set `TEST_DATABASE_URL` in your terminal.
+Without it, the ten database tests intentionally skip.
+
+For a local browser check, initialize and seed the local database, then run
+`python -m backend.scripts.dashboard_cases create`. This creates two explicitly
+synthetic pending cases named APPROVE and DENY. It bypasses the gate and calls no
+providers. Re-running preserves the same cases and their decisions. Use
+`--batch local-2` for a new pair when needed. The command rejects non-local
+database hosts.
+
+Run Uvicorn with `DASHBOARD_PREVIEW=false` and a configured password. Approve the
+APPROVE case and deny the DENY case. Then run
+`python -m backend.scripts.dashboard_cases status` to verify the first has
+`review=approved, action=executed, bookings=1` and the second has
+`review=denied, action=rejected, bookings=0`. Set `DATABASE_URL` to
+`postgresql://demo:demo@127.0.0.1:5432/demo` for these commands on the host.
+Preview remains read only and is never used as a fallback when the database fails.
+
 `Settings.from_env().business_id` and `app.state.settings.business_id` resolve
 `DEMO_BUSINESS_ID` from server configuration. Adapters must use this identity,
 never a caller-supplied business ID. The seed uses the same setting.
@@ -196,7 +268,8 @@ substitute a fake client.
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
 | Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
-| Voice, dashboard | Unfinished; assigned to the other demo issues |
+| Dashboard (SSA-015) | See the SSA-015 section above |
+| Voice | Unfinished; assigned to the other demo issues |
 
 ## Testing SSA-005: Booking Calendar & Execution Connector
 
