@@ -1,0 +1,10 @@
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>
+{% elif rows %}<div class="table-wrap"><table>
+<thead><tr><th scope="col">Request</th><th scope="col">Received</th><th scope="col">Review / action</th><th scope="col">Why it needs attention</th></tr></thead>
+<tbody>{% for row in rows %}<tr>
+<td><a href="/dashboard/cases/{{ row.action_id }}">{{ row.payload.customer_name or "Unnamed caller" }}</a><br>{{ row.payload.service or "Service not recorded" }} · Party of {{ row.payload.party_size or "?" }}</td>
+<td>{{ row.created_at|business_time }}<br>{{ row.channel }}</td>
+<td>{{ row.review_status }}<br><span class="muted">{{ row.state }}</span></td>
+<td>{% for reason in row.reasons or [] if reason.effect != "none" %}<div class="reason">{{ reason.code|reason_text }}</div>{% else %}See case evidence.{% endfor %}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% else %}<p>No reviews recorded.</p>{% endif %}

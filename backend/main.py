@@ -5,11 +5,13 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from backend.config import Settings
+from backend.api.dashboard import router as dashboard_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Supervised Service Agent")
     app.state.settings = settings or Settings.from_env()
+    app.include_router(dashboard_router)
 
     @app.get("/healthz")
     def healthz():
