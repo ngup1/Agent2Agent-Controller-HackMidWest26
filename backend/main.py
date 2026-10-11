@@ -1,6 +1,6 @@
 """SSA-001 FastAPI entry point, with SSA-014 /chat enabled when configured.
 
-The receptionist uses the real gate (SSA-010) and booking calendar (SSA-005)
+The receptionist uses the real gate (SSA-010) and order connector (SSA-031)
 unless a test injects its own. Neither falls back to a permissive fake.
 """
 
@@ -61,7 +61,7 @@ def create_app(
     from backend.database.conversation_repository import PostgresConversationRepository
     from backend.services.conversation import ConversationService
     from backend.services.receptionist_runtime import (
-        BookingExecutor, DatabaseFactsBookingChat, GateAdapter,
+        OrderExecutor, DatabaseFactsBookingChat, GateAdapter,
     )
 
     connect = app.state.connection_factory
@@ -88,7 +88,7 @@ def create_app(
         repository=repo,
         chat=chat,
         gateway=gateway if gateway is not None else GateAdapter(settings, connect),
-        executor=executor if executor is not None else BookingExecutor(settings, connect),
+        executor=executor if executor is not None else OrderExecutor(settings, connect),
     )
     app.state.conversation_service = service
     app.state.conversation_repository = repo

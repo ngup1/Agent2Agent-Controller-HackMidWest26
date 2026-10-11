@@ -6,14 +6,11 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.main import create_app
-from backend.domain.booking_proposal import parse_booking_arguments
+from backend.domain.order_proposal import parse_order_arguments
 from backend.services.booking_chat import ChatTurn
 from tests.unit.fakes_ssa014 import FakeChat, FakeExecutor, FakeGateway, FakeRepository
 
-PAYLOAD = {
-    "service": "haircut", "start_time": "2026-10-12T15:00:00-05:00",
-    "party_size": 1, "customer_name": "Sam",
-}
+PAYLOAD = {"items": ["grilled_pork"], "customer_name": "Sam"}
 SECRET = "test-only-long-and-random-demo-session-secret"
 
 
@@ -22,7 +19,7 @@ def test_app_factory_registers_real_chat_router_with_explicit_fakes():
     client = TestClient(create_app(
         Settings(chat_session_secret=SECRET),
         repository=repo,
-        chat=FakeChat(ChatTurn(proposal=parse_booking_arguments(PAYLOAD))),
+        chat=FakeChat(ChatTurn(proposal=parse_order_arguments(PAYLOAD))),
         gateway=FakeGateway("allow"),
         executor=FakeExecutor(repo),
     ))
@@ -35,13 +32,13 @@ def test_app_factory_registers_real_chat_router_with_explicit_fakes():
         "text": "yes",
     })
     assert second.status_code == 200
-    assert "booked" in second.json()["reply"]
-    assert len(repo.bookings) == 1
+    assert "order is placed" in second.json()["reply"]
+    assert len(repo.orders) == 1
 
 
-def test_default_gateway_is_the_real_gate_and_its_failure_books_nothing(monkeypatch):
+def test_default_gateway_is_the_real_gate_and_its_failure_places_nothing(monkeypatch):
     from backend.database.gate_store import GateStore
-    from backend.services.receptionist_runtime import BookingExecutor, GateAdapter
+    from backend.services.receptionist_runtime import OrderExecutor, GateAdapter
 
     def database_down(self, business_id, action_id):
         raise ConnectionError("synthetic: database unreachable")
@@ -51,10 +48,10 @@ def test_default_gateway_is_the_real_gate_and_its_failure_books_nothing(monkeypa
     app = create_app(
         Settings(chat_session_secret=SECRET),
         repository=repo,
-        chat=FakeChat(ChatTurn(proposal=parse_booking_arguments(PAYLOAD))),
+        chat=FakeChat(ChatTurn(proposal=parse_order_arguments(PAYLOAD))),
     )
     service = app.state.conversation_service
-    assert isinstance(service.gateway, GateAdapter) and isinstance(service.executor, BookingExecutor)
+    assert isinstance(service.gateway, GateAdapter) and isinstance(service.executor, OrderExecutor)
     client = TestClient(app)
     first = client.post("/chat", json={"text": "Haircut tomorrow for Sam"}).json()
     second = client.post("/chat", json={
@@ -64,7 +61,7 @@ def test_default_gateway_is_the_real_gate_and_its_failure_books_nothing(monkeypa
     })
     assert second.status_code == 200
     assert "Nothing is confirmed" in second.json()["reply"]
-    assert not repo.bookings
+    assert not repo.orders
 
 
 def test_missing_secret_or_api_key_explicitly_disables_chat_route():

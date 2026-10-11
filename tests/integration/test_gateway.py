@@ -1,7 +1,6 @@
 """Gate against real PostgreSQL: the decision row, state change and review row."""
 
 from contextlib import nullcontext
-from datetime import datetime
 
 import pytest
 
@@ -10,20 +9,20 @@ from backend.database.gate_store import GateStore
 from backend.database.repository import TranscriptRepository
 from backend.services.gateway import evaluate, fake_assess
 
-from .test_foundation import CLOCK, PROPOSAL, database  # noqa: F401
+from .test_foundation import PROPOSAL, database  # noqa: F401
 
 pytestmark = pytest.mark.integration
 SETTINGS = Settings(retrieval_mode="fake", jev_mode="fake")
 
 
-def run(database, payload, **kwargs):
+def run(database, payload, said="One grilled pork banh mi please", **kwargs):
     repo = database.repo
     interaction = repo.create_interaction(DEMO_BUSINESS_ID, "api")
-    repo.save_segment(DEMO_BUSINESS_ID, interaction, "A haircut tomorrow at three please")
-    repo.save_segment(DEMO_BUSINESS_ID, interaction, "Sure, for how many?", speaker="business_agent")
-    repo.save_segment(DEMO_BUSINESS_ID, interaction, "Just me")
+    repo.save_segment(DEMO_BUSINESS_ID, interaction, said)
+    repo.save_segment(DEMO_BUSINESS_ID, interaction, "Sure, what name is it under?", speaker="business_agent")
+    repo.save_segment(DEMO_BUSINESS_ID, interaction, "Sam")
     action = repo.create_action(DEMO_BUSINESS_ID, interaction, payload)
-    decision = evaluate(action, now=CLOCK, store=GateStore(database.connect), settings=SETTINGS, **kwargs)
+    decision = evaluate(action, store=GateStore(database.connect), settings=SETTINGS, **kwargs)
     return interaction, action, decision
 
 
@@ -39,14 +38,14 @@ def state(database, action, interaction):
 @pytest.mark.parametrize("shared_transaction", [False, True], ids=["separate-transactions", "shared-transaction"])
 def test_delayed_gate_uses_each_proposals_conversation_boundary(database, shared_transaction):
     before = [
-        ("caller", "A haircut tomorrow at three for one please"),
-        ("business_agent", "A haircut at three for one. Is that correct?"),
+        ("caller", "One grilled pork banh mi for Sam please"),
+        ("business_agent", "1 Grilled pork banh mi, $8.50 total, under Sam. Is that correct?"),
         ("caller", "Yes"),
     ]
     after = [
-        ("caller", "Actually, make it two people"),
-        ("business_agent", "A haircut at three for two. Is that correct?"),
-        ("caller", "Yes, two people"),
+        ("caller", "Actually, make it two party trays"),
+        ("business_agent", "2 Party tray, $120.00 total, under Sam. Is that correct?"),
+        ("caller", "Yes, two trays"),
     ]
     assessed, retrieved = [], []
 
@@ -68,11 +67,11 @@ def test_delayed_gate_uses_each_proposals_conversation_boundary(database, shared
             first = repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL)
             for speaker, content in after:
                 repo.save_segment(DEMO_BUSINESS_ID, interaction, content, speaker=speaker)
-            second = repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL | {"party_size": 2})
+            second = repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL | {"items": ["party_tray", "party_tray"]})
 
             # Both assessments run after the later conversation and proposal exist.
             for action, expected_decision in [(first, "allow"), (second, "escalate")]:
-                decision = evaluate(action, now=CLOCK, store=store, settings=SETTINGS,
+                decision = evaluate(action, store=store, settings=SETTINGS,
                                     retrieve=retrieve, assess=assess)
                 assert decision.decision == expected_decision
 
@@ -91,7 +90,7 @@ def test_gate_persists_one_decision_and_moves_the_action(database):
 
     interaction, action, decision = run(database, PROPOSAL, retrieve=retrieve)
     assert decision.decision == "allow"
-    assert seen == {"text": "A haircut tomorrow at three please Just me", "exclude": interaction}
+    assert seen == {"text": "One grilled pork banh mi please Sam", "exclude": interaction}
     assert state(database, action, interaction) == ("allowed", [], "active")
     row = conn.execute(
         "SELECT interaction_id, decision, risk_level, reasons, policy_snapshot FROM security_decisions WHERE action_id=%s",
@@ -100,39 +99,46 @@ def test_gate_persists_one_decision_and_moves_the_action(database):
     assert row == [(interaction, "allow", "low", decision.reasons, decision.policy_snapshot)]
 
     # Evaluating again returns the stored decision and writes nothing.
-    again = evaluate(action, now=datetime.fromisoformat("2026-10-11T14:50:00-05:00"),
-                     store=GateStore(database.connect), settings=Settings())
+    again = evaluate(action, store=GateStore(database.connect), settings=Settings())
     assert again == decision
     assert conn.execute("SELECT count(*) FROM security_decisions WHERE action_id=%s", (action,)).fetchone()[0] == 1
 
-    interaction, action, decision = run(database, PROPOSAL | {"party_size": 3})
-    assert (decision.decision, decision.reasons[0]["code"]) == ("escalate", "GROUP_SIZE")
+    interaction, action, decision = run(database, PROPOSAL | {"items": ["party_tray", "party_tray"]})
+    assert (decision.decision, decision.reasons[0]["code"]) == ("escalate", "ORDER_OVER_LIMIT")
+    assert decision.reasons[0]["evidence"] == {"limit": "100.00", "actual": "120.00"}
     assert state(database, action, interaction) == ("pending_review", [("pending",)], "escalated")
 
-    interaction, action, decision = run(database, PROPOSAL | {"service": "massage"})
-    assert (decision.decision, decision.reasons[0]["code"]) == ("clarify", "UNKNOWN_SERVICE")
+    interaction, action, decision = run(database, PROPOSAL, said="One grilled pork. I have a peanut allergy.")
+    assert decision.reasons[0] == {"code": "KEYWORD_RULE", "source": "rule", "effect": "escalate",
+                                   "evidence": {"label": "Allergy mention", "matched": ["allergy", "peanut"]}}
+    assert state(database, action, interaction) == ("pending_review", [("pending",)], "escalated")
+
+    interaction, action, decision = run(database, PROPOSAL | {"items": ["pizza"]})
+    assert (decision.decision, decision.reasons[0]["code"]) == ("clarify", "UNKNOWN_ITEM")
     assert state(database, action, interaction) == ("rejected", [], "active")
-    assert conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM orders").fetchone()[0] == 0
 
 
-def test_gate_reads_closed_slots_and_remaining_capacity(database):
+def test_gate_reads_the_stored_rules_and_menu_on_every_decision(database):
+    """What stage 2's settings page will edit: no code change, next decision differs."""
     conn = database.conn
-    slot = conn.execute(
-        """SELECT sl.id FROM slots sl JOIN services s ON s.id=sl.service_id
-           WHERE s.code='haircut' AND sl.start_time=%s""",
-        (PROPOSAL["start_time"],),
-    ).fetchone()[0]
-    _, booked_action, _ = run(database, PROPOSAL)
-    conn.execute(
-        "INSERT INTO bookings (business_id, action_id, slot_id, party_size, customer_name) VALUES (%s,%s,%s,2,'Ana')",
-        (DEMO_BUSINESS_ID, booked_action, slot),
-    )
-    _, _, decision = run(database, PROPOSAL | {"party_size": 2})
-    assert decision.decision == "clarify"
-    assert decision.reasons[-1] == {"code": "NO_CAPACITY", "source": "rule", "effect": "clarify",
-                                    "evidence": {"capacity": 3, "booked": 2, "requested": 2}}
-    assert run(database, PROPOSAL)[2].decision == "allow"  # one place is still free
+    assert run(database, PROPOSAL)[2].decision == "allow"
 
-    conn.execute("UPDATE slots SET closed=true WHERE id=%s", (slot,))
+    conn.execute(
+        """UPDATE business_policies SET booking_rules = jsonb_set(booking_rules, '{max_order_total_auto}', '5')
+           WHERE business_id=%s""", (DEMO_BUSINESS_ID,))
     _, _, decision = run(database, PROPOSAL)
-    assert (decision.decision, decision.reasons[0]["evidence"]["problem"]) == ("clarify", "closed")
+    assert decision.reasons[0]["evidence"] == {"limit": "5.00", "actual": "8.50"}
+    assert decision.policy_snapshot["rules"]["max_order_total_auto"] == "5.00"
+
+    conn.execute(
+        """UPDATE business_policies SET booking_rules = booking_rules
+               || '{"max_order_total_auto": 100, "keyword_rules": [{"label": "Catering", "keywords": ["office party"]}]}'
+           WHERE business_id=%s""", (DEMO_BUSINESS_ID,))
+    _, _, decision = run(database, PROPOSAL, said="One grilled pork for our office party, I have a peanut allergy")
+    assert [item["evidence"]["label"] for item in decision.reasons if item["code"] == "KEYWORD_RULE"] == ["Catering"]
+
+    conn.execute("UPDATE services SET price_usd=200 WHERE code='grilled_pork'")
+    assert run(database, PROPOSAL)[2].reasons[0]["evidence"] == {"limit": "100.00", "actual": "200.00"}
+    conn.execute("UPDATE services SET active=FALSE WHERE code='grilled_pork'")
+    assert run(database, PROPOSAL)[2].reasons[0]["code"] == "UNKNOWN_ITEM"

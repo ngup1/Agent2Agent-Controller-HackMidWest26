@@ -3,14 +3,14 @@
 <section><h2>Review queue</h2><p class="muted">Pending first, oldest pending first. Showing up to 100 reviews. Queue refreshes every 5 seconds.</p>
 <div id="queue-content">{% include "queue.html" %}</div>
 <p id="refresh-status" class="muted" role="status" aria-live="polite">Automatic refresh enabled.</p></section>
-{% if error %}<p class="notice error" role="alert">{{ error }} Recent calls and bookings are unavailable.</p>{% endif %}
+{% if error %}<p class="notice error" role="alert">{{ error }} Recent calls and orders are unavailable.</p>{% endif %}
 <div class="grid"><section><h2>Recent calls</h2><p class="muted">Latest 20 calls. Reload the page to update history.</p>
 {% for call in calls %}<p>{% if call.action_id %}<a href="/dashboard/cases/{{ call.action_id }}">{{ call.channel }} call · {{ call.created_at|business_time }}</a>{% else %}{{ call.channel }} call · {{ call.created_at|business_time }}{% endif %}
 <br>Status: {{ call.status }} · Callback: {{ call.callback_number or "none captured" }}</p>
 {% else %}<p>{{ "Calls unavailable." if error else "No calls recorded." }}</p>{% endfor %}</section>
-<section><h2>Recent bookings</h2><p class="muted">Latest 20 persisted bookings.</p>
-{% for booking in bookings %}<p><a href="/dashboard/cases/{{ booking.action_id }}">{{ booking.customer_name }} · {{ booking.service }}</a><br>{{ booking.start_time|business_time }} · Party of {{ booking.party_size }}<br>Reference: {{ booking.id }}</p>
-{% else %}<p>{{ "Bookings unavailable." if error else "No bookings recorded." }}</p>{% endfor %}</section></div>
+<section><h2>Recent orders</h2><p class="muted">Latest 20 placed orders.</p>
+{% for order in orders %}<p><a href="/dashboard/cases/{{ order.action_id }}">{{ order.customer_name }} · ${{ "%.2f"|format(order.total_usd) }}</a><br>{{ order["items"]|order_items }}<br>{{ order.created_at|business_time }} · Reference: {{ order.id }}</p>
+{% else %}<p>{{ "Orders unavailable." if error else "No orders recorded." }}</p>{% endfor %}</section></div>
 {% endblock %}
 {% block scripts %}<script>
 (() => {

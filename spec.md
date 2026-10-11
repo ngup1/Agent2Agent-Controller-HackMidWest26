@@ -1,7 +1,7 @@
 # Supervised Customer-Service Agent — Hackathon Specification
 
-**Version:** 0.2.0 (demo scope)  
-**Status:** Narrowed to a single demo flow on 2026-10-10; not a claim of an implemented or production-ready system  
+**Version:** 0.3.0 (demo scope, order pivot)  
+**Status:** Narrowed to a single demo flow on 2026-10-10 and switched from salon appointments to banh mi orders on 2026-10-11 (SSA-031); not a claim of an implemented or production-ready system  
 **Prepared:** 2026-10-10  
 **Primary deliverable for the first coding-agent session:** Dependency-ordered GitHub issues  
 **Working project identifier:** `supervised-service-agent`  
@@ -19,24 +19,27 @@
 
 The team narrowed the project on 2026-10-10 to one working demonstration. Until the demo, this section and the catalog in Section 16 are authoritative. Where they conflict with Sections 2–15 or 17, **this section wins**. Those sections remain as background and as the design to return to afterwards; do not implement their production-hardening requirements now.
 
+**Order pivot (2026-10-11, SSA-031).** The demo business is now a banh mi shop taking pickup orders, not a salon taking appointments. In this section "order" replaces "booking" throughout: the proposal, the rules, the reason codes, and the executed record all changed and are described below as they now are. Sections 2–15 still describe the appointment design and are background only. The gate's shape (rules, then precedent, then Jev), the action states, staff review, and both voice inputs are unchanged. A dashboard settings page that edits the stored menu and rules is stage 2 and is not part of SSA-031.
+
 ### The flow
 
 1. A caller speaks to the business. There are two voice inputs on one entry point: the browser microphone page (built first, from the existing prototype) and a phone call to the Twilio number through ConversationRelay. Either way the application receives the caller's words as text.
-2. The receptionist agent collects the details, reads them back, and on a spoken yes proposes a booking.
+2. The receptionist agent collects the items and a name, the application reads the order back with a total it computed from the menu, and on a spoken yes the order is proposed.
 3. The gate evaluates the structured proposal against the business rules, similar past calls that staff already decided (retrieved from pgvector), and a typed Jev decision.
-4. **Allow:** the application books the appointment in the mock calendar and the receptionist confirms it aloud.
-5. **Review:** the caller hears the callback line, nothing is booked, and the case appears on the staff dashboard with the reason and the matching past calls. Staff approve (which books it) or deny. Either decision becomes precedent for later calls.
+4. **Allow:** the application writes the order and the receptionist confirms it aloud with the total.
+5. **Review:** the caller hears the callback line, no order is placed, and the case appears on the staff dashboard with the reason and the matching past calls. Staff approve (which places it) or deny. Either decision becomes precedent for later calls.
 
 The handoff from the gate to the receptionist is in-process on the same call. There is no live telephone transfer and no outbound callback call; the dashboard shows the number to call.
 
-Fixed callback line: "I've passed this to our staff. Someone will call you back shortly to confirm. Nothing is booked yet." This deliberately replaces the no-callback-promise rule in Section 10.6.
+Fixed callback line: "I've passed this to our staff. Someone will call you back shortly to confirm. Your order is not placed yet." This deliberately replaces the no-callback-promise rule in Section 10.6.
 
 ### Rules that still hold
 
 These are cheap and keep the demo honest:
 
-- The model never books anything itself. Only the gate followed by the execution code writes a booking.
-- "Booked" is said only after the booking row exists.
+- The model never places an order itself. Only the gate followed by the execution code writes an order.
+- "Placed" is said only after the order row exists.
+- The model never supplies a price or a total. The server computes both from the stored menu, and a proposal carrying either is rejected.
 - A provider failure (Jev, embeddings, retrieval) routes to review. It never becomes an allow, and a fake is never silently substituted for a live call.
 - The business is resolved from server configuration, never from what the caller says.
 - Synthetic data only, and no secrets in the repository.
@@ -56,13 +59,26 @@ These are cheap and keep the demo honest:
 
 Agree these before building in parallel. Changing one means telling every lane. The contracts use the vocabulary of the existing migrations on `origin/databases` (`002_governance.sql`, `003_agent_protection.sql`) unchanged; do not add a translation layer or edit those files.
 
-**Booking proposal** (the receptionist's only tool, stored as `agent_actions.payload` with `action_type = 'book_appointment'`):
+**Order proposal** (the receptionist's only tool, `propose_order`, stored as `agent_actions.payload` with `action_type = 'place_order'`):
 
 ```json
-{"service": "haircut", "start_time": "2026-10-11T15:00:00-05:00", "party_size": 1, "customer_name": "Sam", "callback_number": "+15555550123"}
+{"items": ["grilled_pork", "grilled_pork", "iced_coffee"], "customer_name": "Sam", "callback_number": "+15555550123"}
 ```
 
-`callback_number` is optional. This is the structured form of what the caller said; the rules compare these fields, never the raw transcript.
+`items` holds menu codes, one entry per item ordered; a repeated code means more than one, and there is no quantity field. `callback_number` is optional. There is no pickup time: orders are for pickup as soon as they are ready. Any other field, including a price or total, is rejected.
+
+**Menu and rules** (stored, read on every decision, preloaded by `backend/scripts/seed.py`). The menu is the active rows of `services` (`code`, `name`, `price_usd`). The rules are one JSON record:
+
+```json
+{
+  "max_order_total_auto": 100.00,
+  "keyword_rules": [{"label": "Allergy mention", "keywords": ["allergy", "allergic", "peanut", "gluten", "shellfish"]}]
+}
+```
+
+- An order whose server-computed total is above `max_order_total_auto` goes to staff. A total equal to the limit is allowed.
+- If the caller's own words contain any keyword of a rule (whole word or phrase, case-insensitive), the order goes to staff under that rule's label. This is a word list, not model judgement, and it will miss unusual phrasings; Jev and staff review are the backstop.
+- A missing or malformed rules record is an error, never "no limits".
 
 **Gate decision** (returned by `evaluate(action_id)` and persisted as one `security_decisions` row):
 
@@ -71,34 +87,40 @@ Agree these before building in parallel. Changing one means telling every lane. 
   "decision": "allow | escalate | clarify",
   "risk_level": "low | medium | high | unknown",
   "reasons": [
-    {"code": "GROUP_SIZE", "source": "rule", "effect": "escalate", "evidence": {"limit": 1, "actual": 3}},
+    {"code": "ORDER_OVER_LIMIT", "source": "rule", "effect": "escalate", "evidence": {"limit": "100.00", "actual": "120.00"}},
+    {"code": "KEYWORD_RULE", "source": "rule", "effect": "escalate", "evidence": {"label": "Allergy mention", "matched": ["peanut"]}},
     {"code": "SIMILAR_TO_DENIED", "source": "precedent", "effect": "escalate", "evidence": {"interaction_id": "…", "similarity": 0.86, "summary": "…"}},
     {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "instruction_override", "confidence": 0.91}},
     {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "authority_manipulation", "confidence": 0.91}},
     {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "intent_mismatch", "confidence": 0.91}}
   ],
   "policy_snapshot": {
-    "rules": {"max_party_size_auto": 1, "max_party_size_hard": 3, "min_notice_minutes_auto": 120, "min_notice_minutes_hard": 30},
+    "rules": {"max_order_total_auto": "100.00", "keyword_rules": [{"label": "Allergy mention", "keywords": ["allergy", "peanut"]}]},
+    "order_total": "120.00",
     "checks": [
-      {"rule": "party_size", "limit": "1 automatic, 3 maximum", "actual": 3, "result": "escalate"},
-      {"rule": "notice", "limit": "120 minutes automatic, 30 minimum", "actual": 2880, "result": "pass"}
+      {"rule": "menu_items", "limit": "every item is on the menu", "actual": "party_tray, party_tray", "result": "pass"},
+      {"rule": "order_total", "limit": "$100.00 automatic", "actual": "$120.00", "result": "escalate"},
+      {"rule": "keyword: Allergy mention", "limit": "none of the listed words", "actual": "none", "result": "pass"}
     ]
   }
 }
 ```
 
-- `allow`: book it. `escalate`: send to staff and speak the callback line. `clarify`: the request cannot be booked as asked (unknown service, past or closed slot, party above 3, no capacity), so the receptionist asks for something different. `block` exists in the schema and is not used by the demo.
+- `allow`: place it. `escalate`: send to staff and speak the callback line. `clarify`: the order cannot be placed as asked (an item is not on the menu, or there are no items), so the receptionist asks for something different. `block` exists in the schema and is not used by the demo.
 - `reasons` lists every finding, including ones with no effect, so the dashboard can show the whole picture.
-- `risk_level`: `low` for `allow` and `clarify`; `medium` when only a rule exception escalates; `high` for a Jev concern or a denied precedent; `unknown` when Jev or retrieval was unavailable.
-- Reason codes: `GROUP_SIZE`, `SHORT_NOTICE`, `SIMILAR_TO_DENIED`, `JEV_CONCERN`, `JEV_INSUFFICIENT_CONTEXT`, `JEV_LOW_CONFIDENCE`, `JEV_NO_CONCERN`, `JEV_UNAVAILABLE`, `RETRIEVAL_UNAVAILABLE`, and for `clarify`: `UNKNOWN_SERVICE`, `SLOT_UNAVAILABLE`, `PARTY_TOO_LARGE`, `NO_CAPACITY`.
+- `risk_level`: `low` for `allow` and `clarify`; `medium` when only a rule escalates; `high` for a Jev concern or a denied precedent; `unknown` when Jev or retrieval was unavailable.
+- `policy_snapshot.rules` records the rules in force at the decision, so a case stays accurate after the rules change.
+- Reason codes: `ORDER_OVER_LIMIT`, `KEYWORD_RULE`, `SIMILAR_TO_DENIED`, `JEV_CONCERN`, `JEV_INSUFFICIENT_CONTEXT`, `JEV_LOW_CONFIDENCE`, `JEV_NO_CONCERN`, `JEV_UNAVAILABLE`, `RETRIEVAL_UNAVAILABLE`, and for `clarify`: `UNKNOWN_ITEM`, `EMPTY_ORDER`.
+- Jev receives the items and the server-computed total as the proposed order. Its third question asks whether the items and their counts match what the caller asked for.
 
 **How precedent influences the decision.** Precedent is a past call that a human reviewer approved or denied. The caller's request text is embedded once per proposal and compared with earlier decided calls for the same business.
 
 - If the nearest decided call was **denied** and its similarity is at or above `PRECEDENT_SIMILARITY_MIN` (default 0.80, one minus cosine distance), the gate escalates with `SIMILAR_TO_DENIED`.
 - Otherwise precedent changes nothing. The top three, approved or denied, are attached as evidence for Jev and for the reviewer.
-- Precedent only ever adds caution. A similar approved call never turns an `escalate` into an `allow` and never overrides a rule. A wrong match therefore costs one human glance, not a wrong booking.
+- Precedent only ever adds caution. A similar approved call never turns an `escalate` into an `allow` and never overrides a rule. A wrong match therefore costs one human glance, not a wrong order.
 - The effect is a learning loop with no curation step: staff deny a call on the dashboard, and the next call of that kind is escalated with the denied call shown beside it.
-- The threshold is an uncalibrated demo parameter. Set it from the team's recorded calls so that a routine booking does not match a denied one.
+- The threshold is an uncalibrated demo parameter. Set it from the team's recorded calls so that a routine order does not match a denied one.
+- Only `place_order` proposals count as precedent. Calls decided while the demo was a salon stay in the database and on the dashboard but are not retrieved.
 
 **Schema mapping** (spec term to existing column and value):
 
@@ -108,12 +130,13 @@ Agree these before building in parallel. Changing one means telling every lane. 
 | Callback number | `interactions.callback_number` (new, `004_demo.sql`) | The number the caller gives, else the phone transport's caller ID, else empty. Untrusted in every case |
 | Utterances | `transcript_segments` | `speaker`: `caller`, `business_agent`, `human` |
 | Request embedding | `transcript_embeddings` | One vector per proposal, attached to the call's last caller segment |
-| Proposal | `agent_actions` | `action_type = 'book_appointment'`; `idempotency_key` is required by the schema, so generate one per proposal |
+| Proposal | `agent_actions` | `action_type = 'place_order'`; `idempotency_key` is required by the schema, so generate one per proposal |
 | Action state | `agent_actions.state` | `proposed`, `allowed`, `pending_review`, `rejected`, `executed`, `failed` |
 | Gate decision | `security_decisions` | `decision`: `allow`, `escalate`, `clarify`; plus `risk_level`, `reasons`, `policy_snapshot` |
 | Staff review | `human_reviews.status` | `pending`, `approved`, `denied` |
-| Booking rules | `business_policies.booking_rules` (new, `004_demo.sql`) | The section 4.2 values as JSONB; the order and refund columns are ignored |
-| Calendar | `services`, `slots`, `bookings` (new, `004_demo.sql`) | One booking per action |
+| Order rules | `business_policies.booking_rules` (new, `004_demo.sql`; the column keeps its inherited name) | The rules record above as JSONB; the order and refund columns are ignored |
+| Menu | `services` (new, `004_demo.sql`) | `code`, `name`, `price_usd`, `active`; a removed item is deactivated, not deleted |
+| Placed order | `orders` (new, `006_orders.sql`) | One order per action, with the items and prices as charged and the total. `slots` and `bookings` remain from `004_demo.sql` but are no longer written |
 
 **Action states:**
 
@@ -126,7 +149,7 @@ proposed -> rejected                                (decision clarify; a correct
 
 **Conversation entry point** (shared by phone, browser microphone, and `POST /chat`): `handle_turn(interaction_id, text) -> reply`.
 
-**Recorded calls, not hand-written fixtures.** The starting precedents come from the team's own recorded calls, reviewed on the dashboard and saved as transcripts plus decisions in `fixtures/calls/` so a replay script can rebuild them after a reset. The business itself (services, slots, booking rules) is still seeded; it cannot be spoken into existence.
+**Recorded calls, not hand-written fixtures.** The starting precedents come from the team's own recorded calls, reviewed on the dashboard and saved as transcripts plus decisions in `fixtures/calls/` so a replay script can rebuild them after a reset. The business itself (name, menu, order rules) is still seeded; it cannot be spoken into existence. `python -m backend.scripts.seed --reset` restores the preloaded example over whatever is stored, without deleting calls, reviews, or orders.
 
 ### Akamai reference
 
@@ -1396,6 +1419,7 @@ This is the demo catalog. It replaces the original 29-issue catalog, whose full 
 | SSA-005 | Build the mock booking calendar and execute allowed or approved bookings | D1 | S | SSA-001 |
 | SSA-015 | Build the staff dashboard: review queue, evidence, approve or reject | D1 | M | SSA-001 |
 | SSA-021 | Deploy on Akamai: Linode, Managed PostgreSQL, and TLS | D0 hello-world, D2 final | M | SSA-001 |
+| SSA-031 | Switch the demo to banh mi orders with a preloaded menu and rules (added 2026-10-11; reshapes SSA-005, SSA-009, SSA-010, SSA-014 and SSA-015 as described in the Demo scope section) | D2 | L | None |
 | SSA-022 | Write the demo script and README, and record a backup video | D3 | S | SSA-005, SSA-008, SSA-009, SSA-010, SSA-014, SSA-015, SSA-021, SSA-030 |
 
 ### 16.2 Deferred or folded issues

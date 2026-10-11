@@ -15,13 +15,14 @@ from fastapi.templating import Jinja2Templates
 
 from backend.database.dashboard import DashboardRepository
 from backend.services.dashboard_preview import PreviewDashboardRepository
-from backend.services.dashboard_display import business_time, case_view, percentage, reason_text
+from backend.services.dashboard_display import business_time, case_view, order_items, percentage, reason_text
 from backend.services.dashboard_review import ReviewService, ReviewConflict, ReviewNotFound
-from backend.connectors.booking import BookingExecutionError
+from backend.connectors.orders import OrderExecutionError
 
 basic = HTTPBasic(auto_error=False)
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
-templates.env.filters.update(business_time=business_time, percentage=percentage, reason_text=reason_text)
+templates.env.filters.update(business_time=business_time, percentage=percentage,
+                             reason_text=reason_text, order_items=order_items)
 
 
 def require_dashboard_password(
@@ -81,7 +82,7 @@ def dashboard(request: Request, repository=Depends(get_repository)):
         recent = repository.recent()
     except psycopg.Error:
         return render(request, "dashboard.html", {
-            "rows": [], "calls": [], "bookings": [],
+            "rows": [], "calls": [], "orders": [],
             "error": "Database unavailable. Reviews could not be loaded. Check the database connection and migrations.",
         }, 503)
     return render(request, "dashboard.html", {"rows": rows, **recent, "error": None})
@@ -123,7 +124,7 @@ def decide(request: Request, action_id: UUID, body: DecisionInput,
         raise HTTPException(404, "Review not found.")
     except ReviewConflict:
         raise HTTPException(409, "This review has changed or was already decided. Reload the case.")
-    except BookingExecutionError:
+    except OrderExecutionError:
         raise HTTPException(409, "The action cannot be executed. Reload the case to check its state.")
     except psycopg.Error:
         raise HTTPException(503, "The result could not be confirmed. Reload the case before trying again.")

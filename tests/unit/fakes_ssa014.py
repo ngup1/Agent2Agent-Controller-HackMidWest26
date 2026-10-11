@@ -1,6 +1,7 @@
 """Explicit SSA-014 fake dependencies. Never load these in the cloud/live app."""
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 from backend.services.booking_chat import ChatTurn
@@ -12,7 +13,7 @@ class FakeRepository:
         self.transcripts = {}
         self.pending = {}
         self.actions = {}
-        self.bookings = {}
+        self.orders = {}
         self.claims = 0
 
     def create_interaction(self, business_id, channel="api", callback_number=""):
@@ -54,16 +55,18 @@ class FakeRepository:
         self.claims += 1
         return action_id
 
-    def get_booking_for_action(self, action_id):
-        return self.bookings.get(action_id)
+    def get_order_for_action(self, action_id):
+        return self.orders.get(action_id)
 
-    def resolve_service(self, spoken):
-        services = {"haircut": "Haircut", "beard_trim": "Beard trim"}
-        wanted = spoken.casefold().replace("_", " ")
-        for code, name in services.items():
-            if wanted in {code.replace("_", " "), name.casefold()}:
-                return {"code": code, "name": name}
-        return None
+    def get_menu(self):
+        return {
+            "grilled_pork": {"name": "Grilled pork banh mi", "price": Decimal("8.50")},
+            "iced_coffee": {"name": "Vietnamese iced coffee", "price": Decimal("4.50")},
+            "party_tray": {"name": "Party tray", "price": Decimal("60.00")},
+        }
+
+    def get_business_name(self):
+        return "Demo Banh Mi"
 
 
 class FakeChat:
@@ -88,15 +91,16 @@ class FakeGateway:
 
 
 class FakeExecutor:
-    def __init__(self, repository, create_booking=True, crash_after_commit=False):
+    def __init__(self, repository, create_order=True, crash_after_commit=False):
         self.repository = repository
-        self.create_booking = create_booking
+        self.create_order = create_order
         self.crash_after_commit = crash_after_commit
         self.calls = []
 
     def execute(self, action_id):
         self.calls.append(action_id)
-        if self.create_booking:
-            self.repository.bookings.setdefault(action_id, {"id": str(uuid4()), "action_id": action_id})
+        if self.create_order:
+            self.repository.orders.setdefault(
+                action_id, {"id": str(uuid4()), "action_id": action_id, "total_usd": Decimal("8.50")})
         if self.crash_after_commit:
             raise TimeoutError("response lost after fake commit")

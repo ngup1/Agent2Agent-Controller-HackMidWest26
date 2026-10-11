@@ -1,13 +1,10 @@
-from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import psycopg
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import DEMO_BUSINESS_ID, Settings
 from backend.main import create_app
-from backend.scripts.seed import future_slots
 
 
 def test_health_failure_hides_database_credentials():
@@ -34,20 +31,3 @@ def test_server_environment_selects_business_and_preserves_workshop_names(monkey
     assert settings.embedding_model == "hackathon-embedding"
     assert create_app(settings).state.settings.business_id == settings.business_id
     assert Settings().business_id == DEMO_BUSINESS_ID
-
-
-@pytest.mark.parametrize("clock", ["2026-10-10T08:00:00-05:00", "2026-11-01T08:00:00-06:00"])
-def test_seed_clock_generates_future_utc_slots_in_business_hours(clock):
-    now = datetime.fromisoformat(clock)
-    slots = list(future_slots(now, 3))
-    assert len(slots) == 48
-    assert len(set(slots)) == len(slots)
-    assert all(start > now and end - start == timedelta(minutes=30) for start, end in slots)
-    assert all(start.tzinfo == timezone.utc for start, _ in slots)
-    assert slots[0][0] == now.astimezone(timezone.utc) + timedelta(hours=1)
-
-
-@pytest.mark.parametrize("clock,days", [(datetime(2026, 10, 10), 3), (datetime.now(timezone.utc), 15)])
-def test_seed_rejects_ambiguous_clock_and_excess_horizon(clock, days):
-    with pytest.raises(ValueError):
-        list(future_slots(clock, days))

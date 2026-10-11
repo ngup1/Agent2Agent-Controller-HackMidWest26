@@ -119,10 +119,10 @@ class TranscriptRepository:
                 return cur.fetchone() is not None
 
     def create_action(self, business_id: UUID, interaction_id: UUID,
-                      payload: dict, action_type: str = "book_appointment") -> UUID:
+                      payload: dict, action_type: str = "place_order") -> UUID:
         """Record a proposal only. The gateway owns authorization and state changes."""
-        if action_type != "book_appointment":
-            raise ValueError("Only book_appointment proposals are supported by the demo")
+        if action_type != "place_order":
+            raise ValueError("Only place_order proposals are supported by the demo")
         if not isinstance(payload, dict):
             raise ValueError("Action payload must be an object")
         with self.connection_factory() as conn:
@@ -215,7 +215,7 @@ class TranscriptRepository:
                    FROM agent_actions a
                    JOIN interactions i ON i.id=a.interaction_id AND i.business_id=a.business_id
                    JOIN transcript_segments s ON s.interaction_id=a.interaction_id
-                   WHERE a.id=%s AND a.business_id=%s AND a.action_type='book_appointment'
+                   WHERE a.id=%s AND a.business_id=%s AND a.action_type='place_order'
                      AND s.speaker='caller' AND s.created_at <= a.created_at
                    ORDER BY s.sequence_number""",
                 (action_id, business_id),
@@ -260,7 +260,7 @@ class TranscriptRepository:
                        JOIN interactions i ON i.id=a.interaction_id AND i.business_id=a.business_id
                        JOIN human_reviews r ON r.action_id=a.id
                        WHERE a.business_id=%s AND a.interaction_id<>%s
-                         AND a.action_type='book_appointment'
+                         AND a.action_type='place_order'
                          AND r.status IN ('approved', 'denied')
                        ORDER BY a.interaction_id, r.decided_at DESC NULLS LAST,
                                 a.created_at DESC, a.id DESC

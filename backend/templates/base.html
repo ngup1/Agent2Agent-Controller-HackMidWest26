@@ -20,10 +20,10 @@ button{padding:.7rem 1rem;border:1px solid #8d9e95;border-radius:6px;margin-righ
 footer{padding:1rem 0;color:#51655e;font-size:.85rem}
 </style></head><body>
 <header><a href="/dashboard">Staff workspace</a><h1>{% block heading %}Review dashboard{% endblock %}</h1>
-<p>Review flagged calls and follow their booking results.</p>
+<p>Review flagged calls and follow their order results.</p>
 <div aria-label="Provider modes"><span class="badge">Chat: {{ providers.chat }}</span><span class="badge">Embeddings / retrieval: {{ providers.retrieval }}</span><span class="badge">Jev: {{ providers.jev }}</span></div></header>
 <main>
-{% if preview %}<aside class="notice"><strong>PREVIEW · Synthetic examples · Read only</strong><br>These sample calls are not database records. No bookings can be created here.</aside>{% endif %}
+{% if preview %}<aside class="notice"><strong>PREVIEW · Synthetic examples · Read only</strong><br>These sample calls are not database records. No orders can be placed here.</aside>{% endif %}
 {% block content %}{% endblock %}
 <footer>Provider mode describes configuration at assessment time, not proof of a successful live call. Displayed times use America/Chicago where a timezone was recorded.</footer></main>
 {% block scripts %}{% endblock %}</body></html>

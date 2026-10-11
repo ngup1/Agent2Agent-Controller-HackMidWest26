@@ -1,14 +1,12 @@
 """Reads and the single write transaction used by the gate (SSA-010)."""
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
 from backend.database.repository import _connect
 from backend.domain.gate import GateDecision
-from backend.policy.booking_rules import SlotFacts
 
 STATE_FOR_DECISION = {"allow": "allowed", "escalate": "pending_review", "clarify": "rejected"}
 
@@ -60,25 +58,15 @@ class GateStore:
                     "decision": _stored_decision(cur, action_id),
                 }
 
-    def slot_facts(self, business_id: UUID, service_code, start: datetime | None) -> SlotFacts:
-        if not isinstance(service_code, str):
-            return SlotFacts()
+    def menu(self, business_id: UUID) -> dict:
+        """Active menu items by code, with the display name and current price."""
         with self.connection_factory() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT sl.id, sl.closed, sl.capacity,
-                              (SELECT COALESCE(SUM(b.party_size), 0) FROM bookings b WHERE b.slot_id=sl.id)
-                       FROM services s
-                       LEFT JOIN slots sl ON sl.service_id=s.id AND sl.start_time=%s
-                       WHERE s.business_id=%s AND s.code=%s AND s.active""",
-                    (start, business_id, service_code),
+                    "SELECT code, name, price_usd FROM services WHERE business_id=%s AND active",
+                    (business_id,),
                 )
-                row = cur.fetchone()
-        if row is None:
-            return SlotFacts()
-        if row[0] is None:
-            return SlotFacts(service_known=True)
-        return SlotFacts(True, True, row[1], row[2], int(row[3]))
+                return {code: {"name": name, "price": price} for code, name, price in cur.fetchall()}
 
     def apply_decision(self, business_id: UUID, action_id: UUID, decision: GateDecision) -> GateDecision:
         """Record the decision and move the action in one transaction.

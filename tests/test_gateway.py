@@ -1,6 +1,6 @@
 """Gate unit tests with explicit fakes; no database or provider calls."""
 
-from datetime import datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -8,15 +8,15 @@ import pytest
 from backend.config import Settings
 from backend.domain.gate import GateDecision
 from backend.domain.supervision import QUESTIONS, VERDICTS
-from backend.policy.booking_rules import SlotFacts, check_rules
-from backend.scripts.seed import BOOKING_RULES
+from backend.policy.order_rules import check_rules, matched_keywords
+from backend.scripts.seed import MENU as SEED_MENU, ORDER_RULES
 from backend.services.gateway import evaluate, fake_assess, fake_retrieve
 
-NOW = datetime.fromisoformat("2026-10-10T08:00:00-05:00")
-OPEN_SLOT = SlotFacts(service_known=True, slot_found=True, closed=False, capacity=3, booked=0)
+MENU = {code: {"name": name, "price": Decimal(price)} for code, (name, price) in SEED_MENU.items()}
+ROUTINE_TEXT = "One grilled pork banh mi and an iced coffee for Sam"
 SETTINGS = Settings(retrieval_mode="fake", jev_mode="fake")
 DENIED = {"interaction_id": "past-call", "summary": "Said the owner approved it", "outcome": "denied", "similarity": 0.86}
-APPROVED = {"interaction_id": "ok-call", "summary": "Routine haircut", "outcome": "approved", "similarity": 0.97}
+APPROVED = {"interaction_id": "ok-call", "summary": "Routine order", "outcome": "approved", "similarity": 0.97}
 
 
 @pytest.fixture(autouse=True)
@@ -30,24 +30,23 @@ def retrieval_boundary(monkeypatch):
 
 
 def proposal(**changes):
-    return {"service": "haircut", "start_time": "2026-10-11T15:00:00-05:00", "party_size": 1,
-            "customer_name": "Sam", **changes}
+    return {"items": ["grilled_pork", "iced_coffee"], "customer_name": "Sam", **changes}
 
 
 class FakeStore:
     """In-memory stand-in for GateStore, for tests only."""
 
-    def __init__(self, payload, facts=OPEN_SLOT, caller_text="I'd like a haircut tomorrow at three"):
-        self.action = {"interaction_id": uuid4(), "action_type": "book_appointment", "payload": payload,
-                       "state": "proposed", "booking_rules": BOOKING_RULES, "caller_text": caller_text,
+    def __init__(self, payload, caller_text=ROUTINE_TEXT, rules=ORDER_RULES, menu=MENU):
+        self.action = {"interaction_id": uuid4(), "action_type": "place_order", "payload": payload,
+                       "state": "proposed", "booking_rules": rules, "caller_text": caller_text,
                        "transcript": [{"speaker": "caller", "content": caller_text}], "decision": None}
-        self.facts, self.applied = facts, []
+        self.menu_items, self.applied = menu, []
 
     def load_action(self, business_id, action_id):
         return self.action
 
-    def slot_facts(self, business_id, service_code, start):
-        return self.facts
+    def menu(self, business_id):
+        return self.menu_items
 
     def apply_decision(self, business_id, action_id, decision):
         self.applied.append(decision)
@@ -55,9 +54,10 @@ class FakeStore:
         return decision
 
 
-def decide(payload=None, *, facts=OPEN_SLOT, retrieve=None, assess=None, settings=SETTINGS):
-    store = FakeStore(payload or proposal(), facts)
-    decision = evaluate(uuid4(), now=NOW, retrieve=retrieve, assess=assess, store=store, settings=settings)
+def decide(payload=None, *, caller_text=ROUTINE_TEXT, rules=ORDER_RULES, retrieve=None, assess=None,
+           settings=SETTINGS):
+    store = FakeStore(payload or proposal(), caller_text, rules)
+    decision = evaluate(uuid4(), retrieve=retrieve, assess=assess, store=store, settings=settings)
     assert store.applied == [decision]
     return decision
 
@@ -77,29 +77,63 @@ def test_routine_request_is_allowed_and_fakes_are_labelled():
     assert [reason["evidence"]["question_id"] for reason in decision.reasons] == list(QUESTIONS)
     assert all(reason["evidence"]["mode"] == "fake" for reason in decision.reasons)
     assert decision.policy_snapshot["providers"] == {"retrieval": "fake", "jev": "fake", "embeddings": "fake"}
-    assert decision.policy_snapshot["rules"] == {
-        "max_party_size_auto": 1, "max_party_size_hard": 3,
-        "min_notice_minutes_auto": 120, "min_notice_minutes_hard": 30,
-    }
-    assert {"rule": "notice", "limit": "120 minutes automatic, 30 minimum", "actual": 1860, "result": "pass"} \
-        in decision.policy_snapshot["checks"]
+    assert decision.policy_snapshot["rules"]["max_order_total_auto"] == "100.00"
+    assert decision.policy_snapshot["rules"]["keyword_rules"][0]["label"] == "Allergy mention"
+    assert decision.policy_snapshot["order_total"] == "13.00"
+    assert decision.policy_snapshot["checks"] == [
+        {"rule": "menu_items", "limit": "every item is on the menu",
+         "actual": "grilled_pork, iced_coffee", "result": "pass"},
+        {"rule": "order_total", "limit": "$100.00 automatic", "actual": "$13.00", "result": "pass"},
+        {"rule": "keyword: Allergy mention", "limit": "none of the listed words", "actual": "none", "result": "pass"},
+    ]
 
 
-def test_group_of_three_escalates_with_group_size():
-    decision = decide(proposal(party_size=3))
+def test_order_over_the_total_limit_escalates_and_the_limit_itself_is_allowed():
+    decision = decide(proposal(items=["party_tray", "party_tray"]))
     assert (decision.decision, decision.risk_level) == ("escalate", "medium")
-    assert decision.reasons[0] == {"code": "GROUP_SIZE", "source": "rule", "effect": "escalate",
-                                   "evidence": {"limit": 1, "actual": 3}}
+    assert decision.reasons[0] == {"code": "ORDER_OVER_LIMIT", "source": "rule", "effect": "escalate",
+                                   "evidence": {"limit": "100.00", "actual": "120.00"}}
     assert "JEV_NO_CONCERN" in codes(decision)  # the reviewer still sees Jev's answer
+    # A total equal to the limit is allowed; one cent over is not.
+    at_limit = decide(proposal(items=["party_tray"]), rules={**ORDER_RULES, "max_order_total_auto": 60})
+    assert at_limit.decision == "allow"
+    one_cent_under = decide(proposal(items=["party_tray"]), rules={**ORDER_RULES, "max_order_total_auto": 59.99})
+    assert codes(one_cent_under)[0] == "ORDER_OVER_LIMIT"
 
 
-def test_short_notice_escalates_and_under_the_minimum_is_not_bookable():
-    short = decide(proposal(start_time="2026-10-10T09:30:00-05:00"))
-    assert (short.decision, codes(short)[0]) == ("escalate", "SHORT_NOTICE")
-    too_soon = decide(proposal(start_time="2026-10-10T08:20:00-05:00"))
-    assert (too_soon.decision, codes(too_soon)) == ("clarify", ["SLOT_UNAVAILABLE"])
-    exactly = decide(proposal(start_time="2026-10-10T10:00:00-05:00"))
-    assert exactly.decision == "allow"
+def test_repeated_items_are_each_charged():
+    decision = decide(proposal(items=["grilled_pork"] * 12))  # 12 x 8.50 = 102.00
+    assert decision.decision == "escalate"
+    assert decision.reasons[0]["evidence"] == {"limit": "100.00", "actual": "102.00"}
+    assert decide(proposal(items=["grilled_pork"] * 11)).decision == "allow"  # 93.50
+
+
+@pytest.mark.parametrize("said,matched", [
+    ("One grilled pork for Sam. I have a peanut allergy.", ["allergy", "peanut"]),
+    ("Is the tofu one GLUTEN free? Order one for Sam.", ["gluten"]),
+    ("I'm allergic to shellfish, one tofu please", ["allergic", "shellfish"]),
+])
+def test_allergy_mention_escalates_with_the_rule_label_and_matched_words(said, matched):
+    decision = decide(caller_text=said)
+    assert (decision.decision, decision.risk_level) == ("escalate", "medium")
+    assert decision.reasons[0] == {"code": "KEYWORD_RULE", "source": "rule", "effect": "escalate",
+                                   "evidence": {"label": "Allergy mention", "matched": matched}}
+
+
+def test_keywords_match_whole_words_in_caller_text_only():
+    assert matched_keywords(["peanut", "gluten"], "I love peanutbutter and glutenous rice") == []
+    assert matched_keywords(["tree nut"], "is there any  Tree   Nut in it") == ["tree nut"]
+    assert decide(caller_text="One grilled pork for Sam, no cilantro").decision == "allow"
+
+
+def test_changing_the_stored_rules_changes_the_next_decision():
+    assert decide().decision == "allow"
+    lower_limit = decide(rules={**ORDER_RULES, "max_order_total_auto": 10})
+    assert codes(lower_limit)[0] == "ORDER_OVER_LIMIT"
+    new_keyword = decide(rules={**ORDER_RULES, "keyword_rules": [{"label": "Coffee", "keywords": ["iced coffee"]}]})
+    assert new_keyword.reasons[0]["evidence"] == {"label": "Coffee", "matched": ["iced coffee"]}
+    no_keywords = decide(caller_text="I have a peanut allergy", rules={**ORDER_RULES, "keyword_rules": []})
+    assert no_keywords.decision == "allow"
 
 
 def test_denied_precedent_escalates_even_when_jev_is_unavailable():
@@ -189,58 +223,82 @@ def test_incomplete_required_check_cannot_allow_and_preserves_other_evidence(rep
 def test_three_checks_at_confidence_threshold_allow_and_use_speaker_labelled_context():
     store = FakeStore(proposal())
     store.action["transcript"].extend([
-        {"speaker": "business_agent", "content": "A haircut at 3 pm for one. Is that correct?"},
+        {"speaker": "business_agent", "content": "1 Grilled pork banh mi and 1 Vietnamese iced coffee, $13.00 total, under Sam. Is that correct?"},
         {"speaker": "caller", "content": "yes"},
     ])
     seen = []
 
     def assess(action, transcript, checks, precedents):
-        seen.append(transcript)
+        seen.append((transcript, action["total_usd"]))  # the server's total, for Jev
         result = fake_assess(action, transcript, checks, precedents)
         for answer in result["answers"].values():
             answer["confidence"] = 0.80
         return result
 
-    assert evaluate("action", now=NOW, store=store, assess=assess, settings=SETTINGS).decision == "allow"
-    assert seen == [store.action["transcript"]]
+    assert evaluate("action", store=store, assess=assess, settings=SETTINGS).decision == "allow"
+    assert seen == [(store.action["transcript"], "13.00")]
 
 
 def test_nothing_turns_a_rule_failure_into_allow():
     reassuring = {"retrieve": lambda *args: [APPROVED], "assess": fake_assess}
-    assert decide(proposal(party_size=2), **reassuring).decision == "escalate"
+    assert decide(proposal(items=["party_tray", "party_tray"]), **reassuring).decision == "escalate"
+    assert decide(caller_text="I have a peanut allergy", **reassuring).decision == "escalate"
 
     def must_not_run(*args):
         raise AssertionError("clarify must not call a provider")
 
-    for payload, facts, code in [
-        (proposal(service="massage"), SlotFacts(), "UNKNOWN_SERVICE"),
-        (proposal(), SlotFacts(service_known=True), "SLOT_UNAVAILABLE"),
-        (proposal(), SlotFacts(True, True, True, 3, 0), "SLOT_UNAVAILABLE"),
-        (proposal(start_time="2026-10-09T15:00:00-05:00"), OPEN_SLOT, "SLOT_UNAVAILABLE"),
-        (proposal(start_time="tomorrow"), OPEN_SLOT, "SLOT_UNAVAILABLE"),
-        (proposal(party_size=4), OPEN_SLOT, "PARTY_TOO_LARGE"),
-        (proposal(party_size=0), OPEN_SLOT, "PARTY_TOO_LARGE"),
-        (proposal(party_size=2), SlotFacts(True, True, False, 3, 2), "NO_CAPACITY"),
+    for payload, code in [
+        (proposal(items=["pizza"]), "UNKNOWN_ITEM"),
+        (proposal(items=["grilled_pork", "pizza"]), "UNKNOWN_ITEM"),
+        (proposal(items=["Grilled Pork"]), "UNKNOWN_ITEM"),  # the gate matches codes exactly
+        (proposal(items=[]), "EMPTY_ORDER"),
+        (proposal(items="grilled_pork"), "EMPTY_ORDER"),
+        ({"customer_name": "Sam"}, "EMPTY_ORDER"),
     ]:
-        decision = decide(payload, facts=facts, retrieve=must_not_run, assess=must_not_run)
+        decision = decide(payload, retrieve=must_not_run, assess=must_not_run)
         assert (decision.decision, decision.risk_level) == ("clarify", "low")
         assert code in codes(decision)
+        assert "order_total" not in decision.policy_snapshot
+
+
+def test_a_price_or_total_in_the_payload_is_ignored():
+    # The proposal parser rejects these; the gate still never reads them.
+    decision = decide(proposal(items=["party_tray", "party_tray"], total=1.00, total_usd="1.00",
+                               prices={"party_tray": 0}))
+    assert decision.policy_snapshot["order_total"] == "120.00"
+    assert codes(decision)[0] == "ORDER_OVER_LIMIT"
+
+
+def test_only_place_order_actions_are_evaluated():
+    store = FakeStore(proposal())
+    store.action["action_type"] = "book_appointment"
+    with pytest.raises(ValueError, match="place_order"):
+        evaluate(uuid4(), store=store, settings=SETTINGS)
+    assert store.applied == []
 
 
 def test_an_already_decided_action_returns_its_stored_decision():
     store = FakeStore(proposal())
     store.action["decision"] = stored = GateDecision("escalate", "medium", [], {})
     store.action["state"] = "pending_review"
-    assert evaluate(uuid4(), now=NOW, store=store, settings=SETTINGS) is stored
+    assert evaluate(uuid4(), store=store, settings=SETTINGS) is stored
     assert store.applied == []
 
 
-def test_rules_fail_loudly_when_the_business_is_not_seeded_and_read_local_times():
-    with pytest.raises(ValueError, match="run the seed"):
-        check_rules(proposal(), {}, OPEN_SLOT, NOW)
-    naive = check_rules(proposal(start_time="2026-10-11T15:00:00"), BOOKING_RULES, OPEN_SLOT, NOW)
-    assert naive.result == "pass"
-    assert {item["rule"]: item["actual"] for item in naive.checks}["notice"] == 1860
+@pytest.mark.parametrize("rules", [
+    {}, {"max_order_total_auto": 100}, {"keyword_rules": []},
+    {"max_order_total_auto": "lots", "keyword_rules": []},
+    {"max_order_total_auto": -1, "keyword_rules": []},
+    {"max_order_total_auto": 100, "keyword_rules": [{"label": "", "keywords": ["x"]}]},
+    {"max_order_total_auto": 100, "keyword_rules": [{"label": "A", "keywords": "allergy"}]},
+    # The salon rules this replaces must not be read as "no limits".
+    {"max_party_size_auto": 1, "max_party_size_hard": 3},
+])
+def test_rules_fail_loudly_when_missing_or_malformed(rules):
+    with pytest.raises(ValueError):
+        check_rules(proposal(), rules, MENU, ROUTINE_TEXT)
+    with pytest.raises(ValueError):
+        evaluate(uuid4(), store=FakeStore(proposal(), rules=rules), settings=SETTINGS)
 
 
 def test_settings_reject_an_unknown_provider_mode(monkeypatch):

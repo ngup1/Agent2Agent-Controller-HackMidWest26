@@ -7,15 +7,16 @@ from backend.config import Settings
 from backend.domain.supervision import QUESTIONS, VERDICTS
 from backend.providers import jev
 from backend.services.gateway import evaluate, fake_retrieve
-from tests.test_gateway import NOW, FakeStore, proposal
+from tests.test_gateway import FakeStore, proposal
 
 SETTINGS = Settings(retrieval_mode="fake", jev_mode="live", typesafe_api_key="synthetic-key")
 PRECEDENT = {"interaction_id": "past-call", "summary": "Claimed the owner approved it",
              "outcome": "denied", "similarity": 0.5}
+RECORDED_AT = "2026-10-10T08:00:00-05:00"
 CONVERSATION = [
-    {"speaker": "caller", "content": "A haircut tomorrow at three", "recorded_at": NOW.isoformat()},
-    {"speaker": "business_agent", "content": "A haircut at 3 pm for one. Is that correct?", "recorded_at": NOW.isoformat()},
-    {"speaker": "caller", "content": "yes", "recorded_at": NOW.isoformat()},
+    {"speaker": "caller", "content": "One grilled pork banh mi for Sam", "recorded_at": RECORDED_AT},
+    {"speaker": "business_agent", "content": "1 Grilled pork banh mi, $8.50 total, under Sam. Is that correct?", "recorded_at": RECORDED_AT},
+    {"speaker": "caller", "content": "yes", "recorded_at": RECORDED_AT},
 ]
 
 
@@ -47,8 +48,8 @@ class FakeClient:
 
 
 def assess(client, settings=SETTINGS, conversation=CONVERSATION):
-    return jev.assess(proposal(callback_number="+15555550123"), conversation,
-                      [{"rule": "notice", "result": "pass"}], [PRECEDENT],
+    return jev.assess(proposal(callback_number="+15555550123", total_usd="13.00"), conversation,
+                      [{"rule": "order_total", "result": "pass"}], [PRECEDENT],
                       settings=settings, client_factory=lambda _: client)
 
 
@@ -64,8 +65,8 @@ def test_three_questions_share_one_request_with_confirmation_and_allowlisted_fie
     assert state == {
         "conversation": CONVERSATION,
         "conversation_truncated": False,
-        "proposed_booking": {"service": "haircut", "start_time": "2026-10-11T15:00:00-05:00", "party_size": 1},
-        "rule_checks": [{"rule": "notice", "result": "pass"}],
+        "proposed_order": {"items": ["grilled_pork", "iced_coffee"], "total_usd": "13.00"},
+        "rule_checks": [{"rule": "order_total", "result": "pass"}],
         "similar_past_calls": [{"outcome": "denied", "similarity": 0.5, "summary": "Claimed the owner approved it"}],
     }
     assert set(questions) == {"instruction_override", "authority_manipulation", "intent_mismatch"}
@@ -135,7 +136,7 @@ def test_missing_key_is_unavailable_without_a_request():
 ])
 def test_gate_uses_adapter_and_records_three_results(monkeypatch, client, decision, code):
     monkeypatch.setattr(jev, "_client", lambda settings: client)
-    result = evaluate("action", now=NOW, store=FakeStore(proposal()), settings=SETTINGS, retrieve=fake_retrieve)
+    result = evaluate("action", store=FakeStore(proposal()), settings=SETTINGS, retrieve=fake_retrieve)
     assert result.decision == decision
     assert [reason["code"] for reason in result.reasons] == [code] * 3
     assert [reason["evidence"]["question_id"] for reason in result.reasons] == list(QUESTIONS)

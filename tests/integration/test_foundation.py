@@ -2,7 +2,6 @@
 
 import os
 from contextlib import nullcontext
-from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -16,14 +15,11 @@ from backend.config import DEMO_BUSINESS_ID, Settings
 from backend.database.repository import TranscriptRepository
 from backend.main import create_app
 from backend.scripts.init_db import apply_migrations
-from backend.scripts.seed import BOOKING_RULES, seed
+from backend.scripts.seed import MENU, ORDER_RULES, seed
 
 pytestmark = pytest.mark.integration
-CLOCK = datetime.fromisoformat("2026-10-10T08:00:00-05:00")
 PROPOSAL = {
-    "service": "haircut",
-    "start_time": "2026-10-11T15:00:00-05:00",
-    "party_size": 1,
+    "items": ["grilled_pork"],
     "customer_name": "Sam",
     "callback_number": "+15555550123",
 }
@@ -41,7 +37,7 @@ def database():
         try:
             with psycopg.connect(dsn, autocommit=True, options=f"-c search_path={schema},public") as conn:
                 apply_migrations(conn)
-                seed(conn, DEMO_BUSINESS_ID, CLOCK)
+                seed(conn, DEMO_BUSINESS_ID)
 
                 def connect():
                     connection = psycopg.connect(dsn, options=f"-c search_path={schema},public")
@@ -53,29 +49,60 @@ def database():
             admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
+def menu_rows(conn):
+    return conn.execute("SELECT code, name, price_usd::text, active FROM services ORDER BY code").fetchall()
+
+
 def test_migrations_and_seed_repeat_without_duplicates_or_overwriting_staff(database):
     conn = database.conn
-    before = conn.execute("SELECT id, service_id, start_time FROM slots ORDER BY id").fetchall()
+    before = menu_rows(conn)
     apply_migrations(conn)
-    seed(conn, DEMO_BUSINESS_ID, CLOCK)
-    assert conn.execute("SELECT id, service_id, start_time FROM slots ORDER BY id").fetchall() == before
-    assert len(before) == 96  # 16 slots/day x 3 days x 2 services
-    assert conn.execute("SELECT name FROM businesses").fetchall() == [("Demo Salon",)]
-    assert conn.execute("SELECT code, duration_minutes FROM services ORDER BY code").fetchall() == [("beard_trim", 30), ("haircut", 30)]
-    assert conn.execute("SELECT booking_rules FROM business_policies").fetchone()[0] == BOOKING_RULES
-    conn.execute("UPDATE slots SET capacity=1, closed=true WHERE id=%s", (before[0][0],))
-    conn.execute("UPDATE business_policies SET booking_rules=jsonb_set(booking_rules, '{max_party_size_auto}', '2')")
-    seed(conn, DEMO_BUSINESS_ID, CLOCK)
-    assert conn.execute("SELECT capacity, closed FROM slots WHERE id=%s", (before[0][0],)).fetchone() == (1, True)
-    assert conn.execute("SELECT booking_rules->>'max_party_size_auto' FROM business_policies").fetchone()[0] == "2"
-    assert conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
+    seed(conn, DEMO_BUSINESS_ID)
+    assert menu_rows(conn) == before == sorted((code, name, price, True) for code, (name, price) in MENU.items())
+    assert conn.execute("SELECT name, industry FROM businesses").fetchall() == [("Demo Banh Mi", "restaurant")]
+    assert conn.execute("SELECT booking_rules FROM business_policies").fetchone()[0] == ORDER_RULES
+    assert conn.execute("SELECT count(*) FROM slots").fetchone()[0] == 0  # no pickup times are seeded
+    # A plain re-seed keeps what staff changed.
+    conn.execute("UPDATE services SET price_usd=9.25 WHERE code='tofu'")
+    conn.execute("UPDATE services SET active=FALSE WHERE code='party_tray'")
+    conn.execute("UPDATE business_policies SET booking_rules=jsonb_set(booking_rules, '{max_order_total_auto}', '50')")
+    seed(conn, DEMO_BUSINESS_ID)
+    assert ("tofu", "Tofu banh mi", "9.25", True) in menu_rows(conn)
+    assert ("party_tray", "Party tray", "60.00", False) in menu_rows(conn)
+    assert conn.execute("SELECT booking_rules->>'max_order_total_auto' FROM business_policies").fetchone()[0] == "50"
+    assert conn.execute("SELECT count(*) FROM orders").fetchone()[0] == 0
+
+
+def test_seed_reset_replaces_a_salon_setup_without_deleting_calls(database):
+    """The pivot path on a database that was seeded as the salon."""
+    conn, repo = database.conn, database.repo
+    conn.execute("UPDATE businesses SET name='Demo Salon', industry='salon'")
+    conn.execute("""UPDATE business_policies SET booking_rules='{"max_party_size_auto": 1, "max_party_size_hard": 3}'""")
+    conn.execute("INSERT INTO services (business_id, code, name, price_usd) VALUES (%s, 'haircut', 'Haircut', 30)",
+                 (DEMO_BUSINESS_ID,))
+    conn.execute("UPDATE services SET price_usd=1 WHERE code='tofu'")
+    interaction = repo.create_interaction(DEMO_BUSINESS_ID)
+    repo.save_segment(DEMO_BUSINESS_ID, interaction, "An earlier call")
+
+    seed(conn, DEMO_BUSINESS_ID)  # without --reset the salon setup is left alone
+    assert conn.execute("SELECT name FROM businesses").fetchone()[0] == "Demo Salon"
+    assert "max_order_total_auto" not in conn.execute("SELECT booking_rules FROM business_policies").fetchone()[0]
+
+    seed(conn, DEMO_BUSINESS_ID, reset=True)
+    assert conn.execute("SELECT name, industry FROM businesses").fetchall() == [("Demo Banh Mi", "restaurant")]
+    assert conn.execute("SELECT booking_rules FROM business_policies").fetchone()[0] == ORDER_RULES
+    rows = menu_rows(conn)
+    assert ("haircut", "Haircut", "30.00", False) in rows  # deactivated, not deleted
+    assert ("tofu", "Tofu banh mi", "8.00", True) in rows
+    assert sum(active for *_, active in rows) == len(MENU)
+    assert conn.execute("SELECT count(*) FROM transcript_segments").fetchone()[0] == 1
 
 
 def test_text_first_embedding_proposal_and_gate_evidence_roundtrip(database):
     repo, conn = database.repo, database.conn
     interaction = repo.create_interaction(DEMO_BUSINESS_ID, "phone", "synthetic-call", "+15555550123")
-    segment = repo.save_segment(DEMO_BUSINESS_ID, interaction, "Book a haircut please")
-    assert repo.get_segment(DEMO_BUSINESS_ID, segment)["transcript"] == "Book a haircut please"
+    segment = repo.save_segment(DEMO_BUSINESS_ID, interaction, "One grilled pork please")
+    assert repo.get_segment(DEMO_BUSINESS_ID, segment)["transcript"] == "One grilled pork please"
     assert conn.execute("SELECT count(*) FROM transcript_embeddings").fetchone()[0] == 0
     assert repo.attach_embedding(DEMO_BUSINESS_ID, segment, [0.125] * 1024, "hackathon-embedding")
     assert not repo.attach_embedding(DEMO_BUSINESS_ID, segment, [0.25] * 1024, "other-model")
@@ -89,7 +116,7 @@ def test_text_first_embedding_proposal_and_gate_evidence_roundtrip(database):
     assert all(state == "proposed" and payload == PROPOSAL and key for state, payload, key in rows)
     assert len({row[2] for row in rows}) == 2
     evidence = [{"code": "JEV_UNAVAILABLE", "source": "jev", "effect": "escalate", "evidence": {}}]
-    snapshot = {"rules": BOOKING_RULES, "checks": []}
+    snapshot = {"rules": ORDER_RULES, "checks": []}
     decision = repo.record_decision(DEMO_BUSINESS_ID, action, "escalate", "unknown", evidence, snapshot)
     assert conn.execute("SELECT interaction_id, action_id, decision, risk_level, reasons, policy_snapshot FROM security_decisions WHERE id=%s", (decision,)).fetchone() == (interaction, action, "escalate", "unknown", evidence, snapshot)
     assert conn.execute("SELECT state FROM agent_actions WHERE id=%s", (action,)).fetchone()[0] == "proposed"
@@ -117,7 +144,7 @@ def test_repositories_participate_in_service_transaction_rollback(database):
     assert database.conn.execute("SELECT count(*) FROM security_decisions").fetchone()[0] == 0
 
 
-def test_schema_vocabulary_and_one_booking_per_action(database):
+def test_schema_vocabulary_and_one_order_per_action(database):
     repo, conn = database.repo, database.conn
     for channel in ("web", "phone", "api"):
         interaction = repo.create_interaction(DEMO_BUSINESS_ID, channel)
@@ -131,12 +158,16 @@ def test_schema_vocabulary_and_one_booking_per_action(database):
         conn.execute("UPDATE human_reviews SET status=%s WHERE id=%s", (status, review))
     with pytest.raises(psycopg.errors.CheckViolation):
         conn.execute("UPDATE agent_actions SET state='approved' WHERE id=%s", (action,))
-    slot = conn.execute("SELECT id FROM slots LIMIT 1").fetchone()[0]
-    insert = "INSERT INTO bookings (business_id, action_id, slot_id, party_size, customer_name) VALUES (%s, %s, %s, 1, 'Sam')"
-    conn.execute(insert, (DEMO_BUSINESS_ID, action, slot))
+    insert = """INSERT INTO orders (business_id, action_id, items, total_usd, customer_name)
+                VALUES (%s, %s, '[{"code": "tofu", "name": "Tofu banh mi", "price": "8.00"}]', 8.00, 'Sam')"""
+    conn.execute(insert, (DEMO_BUSINESS_ID, action))
     with pytest.raises(psycopg.errors.UniqueViolation):
-        conn.execute(insert, (DEMO_BUSINESS_ID, action, slot))
-    assert conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 1
+        conn.execute(insert, (DEMO_BUSINESS_ID, action))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("UPDATE orders SET items='[]'")
+    with pytest.raises(ValueError, match="place_order"):
+        repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL, action_type="book_appointment")
+    assert conn.execute("SELECT count(*) FROM orders").fetchone()[0] == 1
 
 
 def test_health_reports_real_database_reachable(database):

@@ -1,11 +1,10 @@
 """The gate: rules, then precedent, then Jev, into allow, escalate or clarify.
 
-Nothing here books anything. `evaluate` records one decision and moves the
+Nothing here places an order. `evaluate` records one decision and moves the
 action to `allowed`, `pending_review` or `rejected`; execution is SSA-005.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from dataclasses import replace
 from functools import partial
 from uuid import UUID
@@ -14,7 +13,7 @@ from backend.config import Settings
 from backend.database.gate_store import GateStore
 from backend.domain.gate import GateDecision, reason
 from backend.domain.supervision import QUESTIONS, VERDICTS, valid_answer
-from backend.policy.booking_rules import check_rules, parse_start_time, rules_used
+from backend.policy.order_rules import check_rules, rules_used
 
 JEV_CONFIDENCE_MIN = 0.80
 JEV_CODES = {
@@ -139,9 +138,9 @@ def _risk_level(decision: str, reasons: list[dict]) -> str:
     return "medium"
 
 
-def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, assess=None,
+def evaluate(action_id: UUID, *, retrieve=None, assess=None,
              store=None, settings: Settings | None = None) -> GateDecision:
-    """Decide one proposed booking and persist the decision.
+    """Decide one proposed order and persist the decision.
 
     An action that was already decided returns its stored decision unchanged.
     `retrieve` and `assess` default to the providers selected by
@@ -151,7 +150,6 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
     if store is None:
         from backend.database.repository import _connect
         store = GateStore(partial(_connect, settings))
-    now = now or datetime.now(timezone.utc)
     business_id = settings.business_id
 
     action = store.load_action(business_id, action_id)
@@ -161,18 +159,19 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         return action["decision"]
     if action["state"] != "proposed":
         raise ValueError(f"Action is {action['state']} with no gate decision")
-    if action["action_type"] != "book_appointment":
-        raise ValueError("The gate only evaluates book_appointment proposals")
+    if action["action_type"] != "place_order":
+        raise ValueError("The gate only evaluates place_order proposals")
 
-    proposal, booking_rules = action["payload"], action["booking_rules"]
-    rules = rules_used(booking_rules)
-    start = parse_start_time(proposal.get("start_time"), booking_rules.get("timezone", "America/Chicago"))
-    facts = store.slot_facts(business_id, proposal.get("service"), start)
-    outcome = check_rules(proposal, booking_rules, facts, now)
+    # The stored rules record keeps the inherited column name, booking_rules.
+    proposal, order_rules = action["payload"], action["booking_rules"]
+    rules = rules_used(order_rules)
+    outcome = check_rules(proposal, order_rules, store.menu(business_id), action["caller_text"])
     reasons = list(outcome.reasons)
     snapshot = {"rules": rules, "checks": outcome.checks}
+    if outcome.total is not None:
+        snapshot["order_total"] = f"{outcome.total:.2f}"
 
-    # A request that cannot be booked as asked needs no precedent or Jev call.
+    # A request that cannot be placed as asked needs no precedent or Jev call.
     if outcome.result == "clarify":
         return store.apply_decision(business_id, action_id, GateDecision("clarify", "low", reasons, snapshot))
 
@@ -216,7 +215,9 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
             }))
 
     try:
-        reasons.extend(_jev_reasons(assess, snapshot["providers"]["jev"], proposal,
+        # Jev sees the server-computed total, never a figure from the model.
+        reasons.extend(_jev_reasons(assess, snapshot["providers"]["jev"],
+                                    {**proposal, "total_usd": snapshot.get("order_total")},
                                     action["transcript"], outcome.checks, precedents))
     except Exception as exc:  # any Jev failure sends the case to staff
         # The adapter reports an error type or a fixed phrase, never provider text.
