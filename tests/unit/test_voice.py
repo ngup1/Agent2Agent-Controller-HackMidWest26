@@ -36,6 +36,9 @@ class PhoneRepository(FakeRepository):
         self.calls = getattr(self, "calls", []) + [(channel, external_reference, callback_number)]
         return interaction_id
 
+    def end_interaction(self, interaction_id):
+        self.ended = getattr(self, "ended", []) + [interaction_id]
+
 
 def phone_app(decision="allow", chat=None, **settings):
     repo = PhoneRepository()
@@ -150,3 +153,20 @@ def test_unconfigured_chat_speaks_the_unavailable_line_and_ends(monkeypatch):
         ws.send_json(PROMPT)
         assert ws.receive_json()["token"] == voice.UNAVAILABLE_LINE
         assert ws.receive_json() == {"type": "end"}
+
+
+def test_a_phone_call_is_marked_ended_when_the_line_closes_but_an_echo_call_is_not():
+    app, repo = phone_app("allow")
+    with TestClient(app).websocket_connect("/voice/stream") as ws:
+        for message in (SETUP, PROMPT):
+            ws.send_json(message)
+        ws.receive_json()
+    # The update runs in a worker thread that can finish just after the socket closes.
+    deadline = time.monotonic() + 2
+    while not getattr(repo, "ended", []) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(repo.ended) == 1
+    app, repo = phone_app(voice_echo=True)
+    with TestClient(app).websocket_connect("/voice/stream") as ws:
+        ws.send_json(SETUP)
+    assert not getattr(repo, "ended", [])

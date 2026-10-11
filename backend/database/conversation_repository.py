@@ -115,6 +115,16 @@ class PostgresConversationRepository:
                 (interaction_id, self.business_id),
             )
 
+    def end_interaction(self, interaction_id: UUID) -> None:
+        """Record that the call is over. Escalated or failed calls keep their status."""
+        with self.connection_factory() as conn:
+            conn.execute(
+                """UPDATE interactions
+                   SET ended_at=now(), status=CASE WHEN status='active' THEN 'completed' ELSE status END
+                   WHERE id=%s AND business_id=%s AND ended_at IS NULL""",
+                (interaction_id, self.business_id),
+            )
+
     def set_callback_number(self, interaction_id: UUID, number: str) -> None:
         # Called only when a customer explicitly supplies a parsed number;
         # otherwise keep Twilio's caller-ID fallback already on interactions.

@@ -194,13 +194,15 @@ five seconds from `/dashboard/board`:
 
 | Column | Colour | A call is here when | Card shows |
 |---|---|---|---|
-| Requests in progress | Blue | It has no outcome yet and had activity in the last 10 minutes | Caller name or number and "In progress"; not clickable |
+| Requests in progress | Blue | It has no outcome yet, is not marked ended, and had activity in the last 10 minutes | Caller name or number and "In progress"; not clickable |
 | Fulfilled requests | Green | An order record exists | Caller and "Order placed: items · total" |
 | Fulfilled requests | Grey | Staff denied it | "Declined by staff. No order placed." |
 | Needs action | Red | A staff review is pending, or an approved or allowed order failed to execute | Caller and the reasons that sent it to staff |
 
-Calls are never marked as ended, so "in progress" is inferred: a call with no
-outcome leaves the board after 10 minutes without a new transcript line. The
+A phone call is marked ended when its line closes, and an ended call with no
+outcome leaves the board at once. Text and API calls are never marked ended, so
+for them "in progress" is inferred: a call with no outcome leaves the board
+after 10 minutes without a new transcript line. The
 caller number is the one Twilio reports for phone calls; text and API calls have
 none, so the card shows the name the caller gave, or "Unknown caller". Neither is
 verified.

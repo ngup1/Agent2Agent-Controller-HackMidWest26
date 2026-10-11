@@ -143,3 +143,10 @@ async def stream(websocket: WebSocket):
                 logger.error("ConversationRelay error: %s", str(message.get("description"))[:200])
     except WebSocketDisconnect:
         pass
+    finally:
+        # The dashboard stops showing the call as in progress once it is ended.
+        if interaction_id is not None:
+            try:
+                await asyncio.to_thread(repository.end_interaction, interaction_id)
+            except Exception as error:
+                logger.error("Voice call could not be marked as ended: %s", type(error).__name__)
