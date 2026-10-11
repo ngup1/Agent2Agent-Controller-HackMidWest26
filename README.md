@@ -157,3 +157,14 @@ a running Uvicorn server returned HTTP 200 with `database: reachable`.
 `docker compose config -q` passed. Compose startup remains unverified because this
 workspace cannot access the Docker daemon socket. Managed database and live
 inference calls were not run.
+
+## SSA-014 receptionist (in-progress)
+
+`POST /chat` and `handle_turn(interaction_id, text)` are now implemented. The route
+requires a server-owned `CHAT_SESSION_SECRET` (24+ characters) and live
+`OPENAI_API_KEY`; neither is committed. Run `python3 -m backend.scripts.init_db`
+to apply the new `005_ssa014.sql` pending-proposal table after SSA-001 migrations.
+Confirmation creates an action atomically, but **no booking can complete** until
+SSA-010's gateway and SSA-005's booking executor are connected to the app factory.
+See [SSA-014 integration guide](docs/ssa-014-integration.md) for wiring, tests,
+and safe fallback behavior.

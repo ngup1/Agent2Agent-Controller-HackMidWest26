@@ -19,6 +19,7 @@ class Settings:
     openai_api_key: str = field(default="", repr=False)
     chat_model: str = "hackathon-chat"
     embedding_model: str = "hackathon-embedding"
+    chat_session_secret: str = field(default="", repr=False)
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
@@ -34,4 +35,5 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
+            chat_session_secret=os.getenv("CHAT_SESSION_SECRET", ""),
         )
