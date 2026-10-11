@@ -1,10 +1,10 @@
-"""Staff review orchestration using the team's SSA-005 execution connector."""
+"""Staff review orchestration using the order connector."""
 from contextlib import nullcontext
 from uuid import UUID
 
 from psycopg.rows import dict_row
 
-from backend.connectors.booking import execute
+from backend.connectors.orders import execute
 from backend.database.dashboard import DashboardRepository
 
 

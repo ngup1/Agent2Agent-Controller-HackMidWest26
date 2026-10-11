@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from backend.api import voice
 from backend.config import Settings
-from backend.domain.booking_proposal import parse_booking_arguments
+from backend.domain.order_proposal import parse_order_arguments
 from backend.main import create_app
 from backend.services.booking_chat import ChatTurn
 from backend.services.conversation import CALLBACK_LINE
@@ -26,10 +26,7 @@ FIXTURE = json.loads(
 )
 SETUP, PARTIAL, PROMPT = FIXTURE
 SECRET = "test-only-long-and-random-demo-session-secret"
-PAYLOAD = {
-    "service": "haircut", "start_time": "2026-10-12T15:00:00-05:00",
-    "party_size": 1, "customer_name": "Sam",
-}
+PAYLOAD = {"items": ["grilled_pork"], "customer_name": "Sam"}
 
 
 class PhoneRepository(FakeRepository):
@@ -45,7 +42,7 @@ def phone_app(decision="allow", chat=None, **settings):
     app = create_app(
         Settings(chat_session_secret=SECRET, public_host="demo.example", **settings),
         repository=repo,
-        chat=chat or FakeChat(ChatTurn(proposal=parse_booking_arguments(PAYLOAD))),
+        chat=chat or FakeChat(ChatTurn(proposal=parse_order_arguments(PAYLOAD))),
         gateway=FakeGateway(decision),
         executor=FakeExecutor(repo),
     )
@@ -63,6 +60,21 @@ def test_incoming_returns_conversationrelay_twiml_for_the_configured_host():
     assert response.headers["content-type"].startswith("text/xml")
     relay = ElementTree.fromstring(response.text).find("Connect/ConversationRelay")
     assert relay.attrib["url"] == "wss://demo.example/voice/stream"
+    assert relay.attrib["welcomeGreeting"] == (
+        "Hello, thanks for calling Demo Banh Mi. You are speaking with our "
+        "automated ordering assistant. What can I get for you?"
+    )
+
+
+def test_incoming_uses_the_generic_greeting_when_the_business_name_is_unavailable():
+    app, repo = phone_app()
+
+    def database_down():
+        raise ConnectionError("synthetic: database unreachable")
+
+    repo.get_business_name = database_down
+    response = TestClient(app).post("/voice/incoming")
+    relay = ElementTree.fromstring(response.text).find("Connect/ConversationRelay")
     assert relay.attrib["welcomeGreeting"] == voice.WELCOME_GREETING
 
 
@@ -89,16 +101,16 @@ def test_echo_mode_repeats_only_the_completed_utterance():
     assert not getattr(repo, "calls", [])
 
 
-def test_routine_booking_by_voice_is_stored_as_a_phone_call():
+def test_routine_order_by_voice_is_stored_as_a_phone_call():
     app, repo = phone_app("allow")
     with TestClient(app).websocket_connect("/voice/stream") as ws:
         for message in (SETUP, PARTIAL, PROMPT):
             ws.send_json(message)
         assert "Is that correct?" in ws.receive_json()["token"]
         ws.send_json(prompt("Yes, that's correct."))
-        assert "booked" in ws.receive_json()["token"]
+        assert "order is placed" in ws.receive_json()["token"]
     assert repo.calls == [("phone", SETUP["callSid"], SETUP["from"])]
-    assert len(repo.bookings) == 1
+    assert len(repo.orders) == 1
 
 
 def test_escalation_speaks_the_callback_line_then_ends_the_call(monkeypatch):
@@ -111,7 +123,7 @@ def test_escalation_speaks_the_callback_line_then_ends_the_call(monkeypatch):
         ws.send_json(prompt("yes"))
         assert ws.receive_json()["token"] == CALLBACK_LINE
         assert ws.receive_json() == {"type": "end"}
-    assert len(repo.bookings) == 0
+    assert len(repo.orders) == 0
 
 
 def test_slow_turn_gets_the_filler_line_first(monkeypatch):

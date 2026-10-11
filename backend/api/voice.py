@@ -2,7 +2,7 @@
 
 Twilio transcribes the caller and speaks our text, so this module only moves
 text. Each completed utterance goes to the same ConversationService that
-POST /chat uses; nothing here books, authorizes or calls a model itself.
+POST /chat uses; nothing here places orders, authorizes or calls a model itself.
 Twilio request signatures are not validated (optional for the demo; see README).
 """
 from __future__ import annotations
@@ -20,12 +20,10 @@ from backend.services.conversation import CALLBACK_LINE
 
 logger = logging.getLogger("uvicorn.error")
 
-WELCOME_GREETING = (
-    "Hello. You are speaking with our automated appointment assistant. How can I help?"
-)
+WELCOME_GREETING = "Hello. You are speaking with our automated ordering assistant. What can I get for you?"
 FILLER_LINE = "One moment."
 UNAVAILABLE_LINE = (
-    "Sorry, our assistant is unavailable right now. Nothing has been booked. "
+    "Sorry, our assistant is unavailable right now. Nothing has been ordered. "
     "Please call back later."
 )
 FILLER_AFTER_SECONDS = 1.5
@@ -34,12 +32,18 @@ FILLER_AFTER_SECONDS = 1.5
 SPEECH_CHARACTERS_PER_SECOND = 14
 
 
-def twiml(host: str) -> str:
+def greeting(business_name: str | None) -> str:
+    if not business_name:
+        return WELCOME_GREETING
+    return f"Hello, thanks for calling {business_name}. " + WELCOME_GREETING.split(". ", 1)[1]
+
+
+def twiml(host: str, welcome: str = WELCOME_GREETING) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response><Connect><ConversationRelay "
         f"url={quoteattr(f'wss://{host}/voice/stream')} "
-        f"welcomeGreeting={quoteattr(WELCOME_GREETING)}"
+        f"welcomeGreeting={quoteattr(welcome)}"
         "/></Connect></Response>"
     )
 
@@ -59,7 +63,15 @@ def incoming(request: Request):
     host = request.app.state.settings.public_host
     if not host:
         return PlainTextResponse("PUBLIC_HOST is not configured", status_code=503)
-    return Response(content=twiml(host), media_type="text/xml")
+    # The name is stored server-side; without it the generic greeting is used.
+    name = None
+    repository = getattr(request.app.state, "conversation_repository", None)
+    if repository is not None and not request.app.state.settings.voice_echo:
+        try:
+            name = repository.get_business_name()
+        except Exception as error:
+            logger.error("Business name unavailable for the greeting: %s", type(error).__name__)
+    return Response(content=twiml(host, greeting(name)), media_type="text/xml")
 
 
 @router.websocket("/voice/stream")

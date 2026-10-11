@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -12,8 +11,6 @@ from backend.config import DEMO_BUSINESS_ID
 from backend.database.repository import TranscriptRepository
 from backend.scripts.init_db import apply_migrations
 from backend.scripts.seed import seed
-
-CLOCK = datetime.fromisoformat("2026-10-10T08:00:00-05:00")
 
 
 @pytest.fixture
@@ -28,7 +25,7 @@ def database():
         try:
             with psycopg.connect(dsn, autocommit=True, options=f"-c search_path={schema},public") as conn:
                 apply_migrations(conn)
-                seed(conn, DEMO_BUSINESS_ID, CLOCK)
+                seed(conn, DEMO_BUSINESS_ID)
 
                 def connect():
                     connection = psycopg.connect(dsn, options=f"-c search_path={schema},public")

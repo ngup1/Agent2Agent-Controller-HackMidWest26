@@ -1,4 +1,4 @@
-"""Real chat, gate, review, booking and pgvector; only inference is fake."""
+"""Real chat, gate, review, order and pgvector; only inference is fake."""
 from dataclasses import replace
 from uuid import uuid5
 
@@ -10,7 +10,6 @@ from backend.config import DEMO_BUSINESS_ID, Settings
 from backend.database.replay import ReplayRepository
 from backend.main import create_app
 from backend.scripts.replay_calls import HttpReplayTransport, RecordedCall, replay_call
-from backend.scripts.seed import seed
 from backend.services.booking_chat import ChatTurn
 from backend.services.conversation import CALLBACK_LINE
 from backend.services import gateway
@@ -31,20 +30,16 @@ class ScriptedChat:
         return ChatTurn(proposal=self.proposal)
 
 
-def app_client(database, settings=SETTINGS, party=1):
-    seed(database.conn, DEMO_BUSINESS_ID)
-    start = database.conn.execute(
-        "SELECT start_time FROM slots WHERE start_time>now()+interval '1 day' ORDER BY start_time LIMIT 1"
-    ).fetchone()[0].isoformat()
+def app_client(database, settings=SETTINGS, items=("grilled_pork",)):
     return TestClient(create_app(
         settings, connection_factory=database.connect,
-        chat=ScriptedChat(PROPOSAL | {"start_time": start, "party_size": party}),
+        chat=ScriptedChat(PROPOSAL | {"items": list(items)}),
     ))
 
 
-def call_recording(identifier, outcome, text="Book two haircuts tomorrow for our group"):
+def call_recording(identifier, outcome, text="Two party trays for our office lunch"):
     turns = (text, "Yes")
-    return RecordedCall(identifier, "group", turns, outcome,
+    return RecordedCall(identifier, "large-order", turns, outcome,
                         tuple({"speaker": "caller", "content": t} for t in turns))
 
 
@@ -62,7 +57,7 @@ def transport(client, settings=SETTINGS):
 def test_replay_twice_through_real_app_preserves_one_call_and_outcome(database, outcome):
     recording = call_recording("integration-test", outcome)
     repository = ReplayRepository(database.connect)
-    with app_client(database, party=1 if outcome is None else 2) as client:
+    with app_client(database, items=["grilled_pork"] if outcome is None else ["party_tray", "party_tray"]) as client:
         http = transport(client)
         assert replay_call(recording, DEMO_BUSINESS_ID, repository, http) == "replayed"
         # A new transport simulates a second CLI invocation, with no in-memory state.
@@ -75,7 +70,7 @@ def test_replay_twice_through_real_app_preserves_one_call_and_outcome(database, 
     for table in ("interactions", "agent_actions", "transcript_embeddings", "security_decisions"):
         assert database.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 1
     assert database.conn.execute("SELECT count(*) FROM human_reviews").fetchone()[0] == (outcome is not None)
-    assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == (outcome != "denied")
+    assert database.conn.execute("SELECT count(*) FROM orders").fetchone()[0] == (outcome != "denied")
 
 
 def test_denial_becomes_gate_jev_and_dashboard_evidence_for_later_call(database, monkeypatch):
@@ -107,18 +102,18 @@ def test_denial_becomes_gate_jev_and_dashboard_evidence_for_later_call(database,
         assert row[2]["providers"] == {"retrieval": "fake", "embeddings": "fake", "jev": "fake"}
         page = client.get(f"/dashboard/cases/{row[0]}")
         assert "SIMILAR_TO_DENIED" in page.text and denied_id in page.text
-        assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
+        assert database.conn.execute("SELECT count(*) FROM orders").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("failure", ["embedding", "search"])
-def test_retrieval_failure_reaches_staff_without_booking(database, monkeypatch, failure):
+def test_retrieval_failure_reaches_staff_without_an_order(database, monkeypatch, failure):
     settings = replace(SETTINGS, retrieval_mode="live", embedding_mode="fake") if failure == "embedding" else SETTINGS
     if failure == "search":
         def unavailable(*args, **kwargs):
             raise RuntimeError("Synthetic retrieval failure")
         monkeypatch.setattr("backend.database.repository.TranscriptRepository.search_precedents", unavailable)
     with app_client(database, settings) as client:
-        first = client.post("/chat", json={"text": "A haircut for Sam"}).json()
+        first = client.post("/chat", json={"text": "A grilled pork banh mi for Sam"}).json()
         response = client.post("/chat", json={k: first[k] for k in ("interaction_id", "conversation_token")} | {"text": "Yes"})
         assert response.json()["reply"] == CALLBACK_LINE
     row = database.conn.execute("SELECT risk_level, reasons, policy_snapshot FROM security_decisions").fetchone()
@@ -126,7 +121,7 @@ def test_retrieval_failure_reaches_staff_without_booking(database, monkeypatch, 
     assert "RETRIEVAL_UNAVAILABLE" in {r["code"] for r in row[1]}
     assert row[2]["providers"]["retrieval"] == settings.retrieval_mode
     assert row[2]["providers"]["embeddings"] == settings.retrieval_mode
-    assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
+    assert database.conn.execute("SELECT count(*) FROM orders").fetchone()[0] == 0
     if failure == "embedding":
         assert database.conn.execute("SELECT count(*) FROM transcript_embeddings").fetchone()[0] == 0
 

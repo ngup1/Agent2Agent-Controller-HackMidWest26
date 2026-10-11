@@ -1,6 +1,6 @@
 """SSA-014 adapter over SSA-001's real PostgreSQL TranscriptRepository.
 
-All methods are scoped to the server-configured demo business. Pending booking
+All methods are scoped to the server-configured demo business. Pending order
 read-back state is persisted in 005_ssa014.sql (never process memory). One
 confirmation is claimed and an action inserted in the same database transaction.
 """
@@ -13,7 +13,7 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from backend.database.repository import TranscriptRepository, _connect
-from backend.domain.booking_proposal import parse_booking_arguments
+from backend.domain.order_proposal import parse_order_arguments
 
 
 class PostgresConversationRepository:
@@ -86,7 +86,7 @@ class PostgresConversationRepository:
         return row[0] if row else None
 
     def store_pending_proposal(self, interaction_id: UUID, payload: dict) -> None:
-        validated = parse_booking_arguments(payload).action_payload()
+        validated = parse_order_arguments(payload).action_payload()
         with self.connection_factory() as conn:
             with conn.cursor() as cur:
                 # Serialize proposed-action changes by locking the parent call.
@@ -153,11 +153,11 @@ class PostgresConversationRepository:
                 row = cur.fetchone()
                 if row is None or row[1] != "pending":
                     return None
-                payload = parse_booking_arguments(row[0]).action_payload()
+                payload = parse_order_arguments(row[0]).action_payload()
                 if not payload.get("callback_number") and interaction[1]:
                     fallback = dict(payload, callback_number=interaction[1])
                     try:
-                        payload = parse_booking_arguments(fallback).action_payload()
+                        payload = parse_order_arguments(fallback).action_payload()
                     except ValueError:
                         pass  # Bad unverified caller ID is not usable contact data.
                 # Reuse SSA-001's canonical action-creation helper within the SAME
@@ -172,48 +172,42 @@ class PostgresConversationRepository:
                 )
                 return action_id
 
-    def get_booking_for_action(self, action_id: UUID) -> dict | None:
+    def get_order_for_action(self, action_id: UUID) -> dict | None:
         with self.connection_factory() as conn:
             row = conn.execute(
-                """SELECT id, action_id, slot_id, created_at FROM bookings
+                """SELECT id, action_id, total_usd, created_at FROM orders
                    WHERE action_id=%s AND business_id=%s""",
                 (action_id, self.business_id),
             ).fetchone()
         if row is None:
             return None
-        return dict(zip(("id", "action_id", "slot_id", "created_at"), row))
+        return dict(zip(("id", "action_id", "total_usd", "created_at"), row))
 
-    def resolve_service(self, spoken: str) -> dict | None:
-        """Match what the model sent to an active service by code or display name."""
-        def key(value: str) -> str:
-            return " ".join(re.sub(r"[\s_-]+", " ", value.casefold()).split())
-
+    def get_menu(self) -> dict:
+        """Active menu items by code, with display name and current price."""
         with self.connection_factory() as conn:
             rows = conn.execute(
-                "SELECT code, name FROM services WHERE business_id=%s AND active=TRUE ORDER BY code",
+                "SELECT code, name, price_usd FROM services WHERE business_id=%s AND active=TRUE ORDER BY code",
                 (self.business_id,),
             ).fetchall()
-        for code, name in rows:
-            if key(spoken) in {key(code), key(name)}:
-                return {"code": code, "name": name}
-        return None
+        return {code: {"name": name, "price": price} for code, name, price in rows}
+
+    def get_business_name(self) -> str | None:
+        with self.connection_factory() as conn:
+            row = conn.execute(
+                "SELECT name FROM businesses WHERE id=%s", (self.business_id,)
+            ).fetchone()
+        return row[0] if row else None
 
     def get_public_business_facts(self) -> str:
-        """Build prompt facts from actual seeded services, not model guesses."""
-        with self.connection_factory() as conn:
-            rows = conn.execute(
-                """SELECT code, name, duration_minutes, price_usd
-                   FROM services WHERE business_id=%s AND active=TRUE ORDER BY code""",
-                (self.business_id,),
-            ).fetchall()
-        if not rows:
-            raise RuntimeError("Demo Salon services are not seeded")
-        services = ", ".join(
-            f"{name} (code {code}, {minutes} minutes, ${price:.2f})"
-            for code, name, minutes, price in rows
+        """Build prompt facts from the stored business name and menu, not model guesses."""
+        name, menu = self.get_business_name(), self.get_menu()
+        if not name or not menu:
+            raise RuntimeError("The business and its menu are not seeded")
+        listing = "; ".join(
+            f"{item['name']} (code {code}, ${item['price']:.2f})" for code, item in menu.items()
         )
         return (
-            "Demo Salon, America/Chicago. Seeded appointment slots run 9:00 AM to "
-            "5:00 PM local time; only real available slots may be booked. "
-            f"Published services: {services}."
+            f"Business name: {name}. Orders are for pickup, as soon as they are ready; "
+            f"no pickup time is taken. Menu: {listing}."
         )

@@ -21,21 +21,10 @@ def create_cases(conn, business_id, batch):
             (business_id, key),
         ).fetchone():
             continue
-        slot = conn.execute("""
-            SELECT s.start_time FROM slots s
-            JOIN services v ON v.id=s.service_id AND v.business_id=s.business_id
-            WHERE s.business_id=%s AND v.code='haircut' AND v.active AND NOT s.closed
-              AND s.start_time > now() + interval '120 minutes'
-              AND s.capacity - COALESCE((SELECT SUM(b.party_size)
-                  FROM bookings b WHERE b.slot_id=s.id),0) >= 2
-            ORDER BY s.start_time LIMIT 1
-        """, (business_id,)).fetchone()
-        if slot is None:
-            raise ValueError("No suitable future slot. Run python -m backend.scripts.seed --days 3")
         interaction_id, action_id = uuid4(), uuid4()
         name = f"SYNTHETIC - {label.upper()} - {batch}"
-        payload = {"service": "haircut", "party_size": 2, "customer_name": name,
-                   "start_time": slot[0].isoformat(), "callback_number": "+15555550123"}
+        payload = {"items": ["party_tray", "party_tray"], "customer_name": name,
+                   "callback_number": "+15555550123"}
         conn.execute("""
             INSERT INTO interactions(id,business_id,channel,status,external_reference,callback_number)
             VALUES (%s,%s,'api','escalated',%s,%s)
@@ -43,20 +32,21 @@ def create_cases(conn, business_id, batch):
         conn.execute("""
             INSERT INTO transcript_segments(interaction_id,sequence_number,speaker,content)
             VALUES (%s,0,'caller',%s)
-        """, (interaction_id, f"SYNTHETIC MANUAL TEST: Request two haircuts at {slot[0].isoformat()}."))
+        """, (interaction_id, "SYNTHETIC MANUAL TEST: Request two party trays."))
         conn.execute("""
             INSERT INTO agent_actions(id,interaction_id,business_id,action_type,payload,idempotency_key,state)
-            VALUES (%s,%s,%s,'book_appointment',%s,%s,'pending_review')
+            VALUES (%s,%s,%s,'place_order',%s,%s,'pending_review')
         """, (action_id, interaction_id, business_id, Jsonb(payload), key))
         conn.execute("""
             INSERT INTO security_decisions(interaction_id,action_id,decision,risk_level,reasons,policy_snapshot)
             VALUES (%s,%s,'escalate','medium',%s,%s)
         """, (interaction_id, action_id,
-              Jsonb([{"code": "GROUP_SIZE", "source": "rule", "effect": "escalate",
-                      "evidence": {"limit": 1, "actual": 2}}]),
+              Jsonb([{"code": "ORDER_OVER_LIMIT", "source": "rule", "effect": "escalate",
+                      "evidence": {"limit": "100.00", "actual": "120.00"}}]),
               Jsonb({"synthetic_manual_test": True,
-                     "checks": [{"rule": "party_size", "limit": "1 automatic, 3 maximum",
-                                 "actual": 2, "result": "escalate"}],
+                     "order_total": "120.00",
+                     "checks": [{"rule": "order_total", "limit": "$100.00 automatic",
+                                 "actual": "$120.00", "result": "escalate"}],
                      "precedents": [], "providers": {"retrieval": "unset", "jev": "unset"}})))
         conn.execute("INSERT INTO human_reviews(action_id) VALUES (%s)", (action_id,))
 
@@ -64,7 +54,7 @@ def create_cases(conn, business_id, batch):
 def case_status(conn, business_id, batch):
     return conn.execute("""
         SELECT a.payload->>'customer_name', r.status, a.state,
-               (SELECT count(*) FROM bookings b WHERE b.action_id=a.id), a.id
+               (SELECT count(*) FROM orders o WHERE o.action_id=a.id), a.id
         FROM agent_actions a JOIN human_reviews r ON r.action_id=a.id
         WHERE a.business_id=%s AND a.idempotency_key IN (%s,%s)
         ORDER BY a.idempotency_key
@@ -93,8 +83,8 @@ def main():
     print("SYNTHETIC local dashboard tests. These bypass the gate and do not test providers.")
     if not rows:
         print("No cases found. Run the create command for this batch.")
-    for name, review, action, bookings, action_id in rows:
-        print(f"{name}: review={review}, action={action}, bookings={bookings}")
+    for name, review, action, orders, action_id in rows:
+        print(f"{name}: review={review}, action={action}, orders={orders}")
         print(f"  http://127.0.0.1:8000/dashboard/cases/{action_id}")
 
 

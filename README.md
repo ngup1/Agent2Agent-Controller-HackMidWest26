@@ -19,6 +19,82 @@ The demo runs on an Akamai Linode with Akamai Managed PostgreSQL at
 Deployment details, resource IDs and verification results are under
 [Deploying on Akamai (SSA-021)](#deploying-on-akamai-ssa-021).
 
+The host was moved to the banh mi order build on 2026-10-11 (`apply`, then
+`seed --reset`, run by the owner). It does not yet have the later prompt fix that
+stops the receptionist asking for a phone number; see
+[Banh mi orders (SSA-031)](#banh-mi-orders-ssa-031).
+
+## Banh mi orders (SSA-031)
+
+The demo business is now a banh mi shop taking pickup orders. The gate's shape
+(rules, then precedent, then Jev), staff review and both voice inputs are
+unchanged; the proposal, rules, reason codes and executed record are new. The
+contract is in the Demo scope section of [spec.md](spec.md).
+
+- **Order proposal:** `propose_order` with `items` (menu codes, repeated for more
+  than one), `customer_name`, optional `callback_number`. A price or total from
+  the model is rejected.
+- **Preloaded menu (synthetic):** grilled pork $8.50, lemongrass chicken $8.50,
+  tofu $8.00, cold cut special $9.00, Vietnamese iced coffee $4.50, party tray $60.00.
+- **Preloaded rules:** a total above $100.00 goes to staff; a caller who says an
+  allergy word (allergy, allergic, peanut, gluten, shellfish and others in
+  `backend/scripts/seed.py`) goes to staff under "Allergy mention".
+- **Where they live:** the menu is the `services` table and the rules are the
+  `business_policies.booking_rules` JSON (inherited column name). The gate reads
+  both on every decision, so an edit takes effect on the next order with no
+  restart. A dashboard settings page to edit them is stage 2 and is not built.
+- **Earlier salon calls** stay in the database and on the dashboard. They are not
+  used as precedent, because retrieval only considers `place_order` proposals.
+
+What is verified, and how:
+
+| Check | Result |
+|---|---|
+| Automated tests | 247 pass without a database; 300 pass with `TEST_DATABASE_URL` on local PostgreSQL 17 with pgvector (isolated schemas). Inference is fake in every test |
+| Local rehearsal through `POST /chat`, 2026-10-11 | Live `hackathon-chat`, live `hackathon-embedding` retrieval, `JEV_MODE=fake`, local PostgreSQL. One run of each call below; not a calibration |
+| Deployed host, managed database, 2026-10-11 | Through `POST /chat` with live `hackathon-chat`, live retrieval, `JEV_MODE=fake`: a routine order was placed at $13.00 and an allergy mention went to staff with no order. The two-party-tray call did **not** reach the gate in two attempts, because the model asked for a callback number instead of proposing. The prompt was then changed; the changed prompt returned the correct proposal three times out of three when called directly against the live model, but it has **not** been redeployed or re-run on the host |
+| Phone call through Twilio | **Not run** with orders. No real call has reached the application yet (SSA-023) |
+| Live Jev with orders | **Not run.** The reworded third question is tested with a fake client only |
+
+Local rehearsal calls:
+
+| Call | Outcome |
+|---|---|
+| "A grilled pork banh mi and an iced coffee", then "It's for Sam", then yes | Read back at $13.00; order placed |
+| "Two party trays for an office lunch, the name is Dana" | Read back at $120.00; callback line; `ORDER_OVER_LIMIT`; no order until staff approved it on the dashboard, which placed it |
+| "One tofu banh mi for Lee. I have a peanut allergy" | Callback line; `KEYWORD_RULE` (allergy, peanut); denied on the dashboard; no order |
+| The same allergy call again | Also `SIMILAR_TO_DENIED`, risk high (similarity 1.00: identical wording, so this shows the loop, not semantic recall) |
+| "How much is the lemongrass chicken?", then "Okay, two of those and a cold cut special for Ravi" | Price answered from the menu; read back at $26.00; order placed. Nearest denied precedent scored 0.43 |
+| "Can I get a pepperoni pizza for Kim?" | The model declined and listed the menu; no proposal reached the gate |
+
+Chat replies took 1.6 to 6.6 seconds; confirmations took about 0.6 seconds.
+The rehearsal found two confirmation bugs, both fixed with tests: an order that
+opened with "okay" or "sure" was mistaken for a stray yes, and "yes, and add a
+coffee" would have placed the order without the coffee.
+
+Known limits:
+
+- Allergy detection is a word list. "I can't eat nuts" does not match it.
+- One item type repeated is the only way to order several; there are no
+  modifiers ("no cilantro"), pickup times or payment.
+- Some module and table names still say "booking" (`booking_chat.py`,
+  `pending_booking_proposals`, `business_policies.booking_rules`).
+
+The managed database holds rows from that check: one placed order (Rehearsal Sam)
+and one pending review (Rehearsal Lee).
+
+To move a host over, or to ship a later build (changes the live demo; run by the
+owner; `seed --reset` is only needed once):
+
+```bash
+bash deploy/deploy_linode.sh apply     # ships this build and applies 006_orders.sql
+ssh -i ~/.ssh/id_ed25519 root@172.232.10.159 \
+  'cd /opt/ssa && docker compose -f deploy/compose.yaml run --rm init python -m backend.scripts.seed --reset'
+```
+
+Until `seed --reset` runs there, the stored rules are the salon's and every
+confirmed order answers "I couldn't check that request", with nothing placed.
+
 ## Local setup
 
 Requires Docker with Compose and permission to access its daemon:
@@ -49,18 +125,19 @@ docker compose run --rm init python -m backend.scripts.seed
 These tables do not depend on the workshop's starter `001`. The capability/audit
 tables inherited from 002/003 are unused by this demo.
 
-The repeatable seed inserts one server-configured **Demo Salon**, section 4.2
-booking rules, `haircut` and `beard_trim` services, and half-hour slots from
-09:00–17:00 Chicago time for today and the next two days. Only future slots are
-generated; timestamps are stored in UTC and capacity is 3 per service slot.
-Reruns preserve existing rules, service edits and slot closures/capacity, and fill
-an empty booking policy when upgrading an older database. No precedents, calls or
-bookings are fabricated by seeding.
+The repeatable seed inserts one server-configured **Demo Banh Mi** shop, its
+order rules (a $100 total limit and an "Allergy mention" keyword rule) and a
+six-item synthetic menu with prices (SSA-031). Reruns preserve existing rules and
+menu edits, and fill an empty rules record when upgrading an older database.
+`python -m backend.scripts.seed --reset` restores the preloaded example: it
+overwrites the rules, updates the listed items and deactivates any other item
+(such as the earlier salon services). It deletes nothing. No precedents, calls or
+orders are fabricated by seeding.
 
-An injectable clock supports reproducible schedules (1–14 days):
+To restore the preloaded menu and rules on an existing database:
 
 ```bash
-docker compose run --rm init python -m backend.scripts.seed --now 2026-10-10T08:00:00-05:00 --days 3
+docker compose run --rm init python -m backend.scripts.seed --reset
 ```
 
 ## Host Python and tests
@@ -183,7 +260,7 @@ never a caller-supplied business ID. The seed uses the same setting.
 - `create_interaction(business_id, channel='api', external_reference=None, callback_number=None)`
 - `save_segment(business_id, interaction_id, transcript, embedding=None, speaker='caller')`
 - `attach_embedding(business_id, segment_id, embedding, embedding_model=None)`
-- `create_action(business_id, interaction_id, payload, action_type='book_appointment')`
+- `create_action(business_id, interaction_id, payload, action_type='place_order')`
 - `record_decision(business_id, action_id, decision, risk_level, reasons, policy_snapshot)`
 
 Save text before calling the embedding provider so a provider failure cannot erase
@@ -195,7 +272,7 @@ attached; it preserves the first vector/model. Vectors have 1,024 dimensions.
 
 An action starts as `proposed` with a generated `idempotency_key`. Recording a
 decision stores gate evidence without changing state or executing anything.
-Payloads follow the booking proposal in the spec. The receptionist and gate lanes
+Payloads follow the order proposal in the spec. The receptionist and gate lanes
 own proposal validation and workflow orchestration.
 
 By default, repository methods each use a connection transaction. To compose
@@ -207,17 +284,18 @@ Use the existing schema vocabulary: channels `phone`, `web`, `api`; states
 `proposed`, `allowed`, `pending_review`, `rejected`, `executed`, `failed`;
 decisions `allow`, `escalate`, `clarify`; review statuses `pending`, `approved`, `denied`.
 
-Calendar columns are `services.code/name/duration_minutes/price_usd/active`,
-`slots.service_id/start_time/end_time/capacity/closed`, and
-`bookings.action_id/slot_id/party_size/customer_name/callback_number`, plus IDs and
-business IDs. `bookings.action_id` is unique. Capacity enforcement and execution
-belong to SSA-005; the table alone does not enforce workflow authorization.
+Menu columns are `services.code/name/price_usd/active`. Placed orders are
+`orders.action_id/items/total_usd/customer_name/callback_number` (`006_orders.sql`),
+plus IDs and business IDs; `orders.action_id` is unique. Execution belongs to
+`backend/connectors/orders.py`; the table alone does not enforce workflow
+authorization. `slots` and `bookings` remain from the salon version and are no
+longer written.
 
 ## Gate (SSA-010)
 
-`backend.services.gateway.evaluate(action_id)` decides one `proposed` booking and
+`backend.services.gateway.evaluate(action_id)` decides one `proposed` order and
 returns a `GateDecision` (`decision`, `risk_level`, `reasons`, `policy_snapshot`,
-plus `to_dict()`) in the spec's Demo scope shape. It books nothing. In one
+plus `to_dict()`) in the spec's Demo scope shape. It places nothing. In one
 transaction it writes one `security_decisions` row and moves the action:
 
 | Decision | Action state | Also written |
@@ -228,11 +306,19 @@ transaction it writes one `security_decisions` row and moves the action:
 
 Calling it again for a decided action returns the stored decision and writes nothing.
 
-Order: rules (`backend/policy/booking_rules.py`), then precedent, then Jev. A
-`clarify` stops after the rules and calls no provider. Notice under 30 minutes is
-`clarify` with `SLOT_UNAVAILABLE`; 30–119 minutes is `escalate` with `SHORT_NOTICE`.
-A party below one reuses `PARTY_TOO_LARGE`, because the contract has no other code.
-A start time without an offset is read as business-local time.
+Sequence: rules (`backend/policy/order_rules.py`), then precedent, then Jev. A
+`clarify` stops after the rules and calls no provider. The rules read every limit
+from the stored rules record on each decision:
+
+- an item that is not an active menu code, or no items: `clarify` with
+  `UNKNOWN_ITEM` or `EMPTY_ORDER`;
+- a server-computed total above `max_order_total_auto`: `escalate` with
+  `ORDER_OVER_LIMIT` (a total equal to the limit passes);
+- any keyword of a keyword rule in the caller's own words (whole word or phrase,
+  case-insensitive): `escalate` with `KEYWORD_RULE` and the rule's label.
+
+A missing or malformed rules record raises an error; it is never read as "no
+limits". Keyword matching is a word list and will miss unusual phrasings.
 
 Besides `rules` and `checks`, `policy_snapshot` holds `precedents` (up to three,
 nearest first, approved or denied), `providers` (the mode each provider ran in) and
@@ -329,15 +415,14 @@ substitute a fake client.
 | Component | Status |
 |---|---|
 | PostgreSQL/pgvector and health endpoint (SSA-001) | Real persistence; integration tests require a local database |
-| Mock calendar & execution connector (SSA-005) | Implemented (`backend/connectors/booking.py`); verified via 4 integration tests |
+| Order connector (SSA-031, replacing the SSA-005 calendar) | Implemented (`backend/connectors/orders.py`); verified by integration tests on local PostgreSQL |
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database and Linode deployment (SSA-021) | Deployed 2026-10-10 at `https://172-232-10-159.sslip.io`; HTTPS health, managed database and booking-after-restart verified; Twilio check pending. See the section below |
 | Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; one live retrieval rehearsal run on the deployed host (see SSA-021 section) |
 | Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; live recall rehearsed once on the deployed host; recordings and threshold calibration pending |
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; three checks per request; five live scenarios and two local app flows verified on 2026-10-11 |
-| Booking calendar (SSA-005) | Real persistence; see the section below |
-| Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
+| Receptionist (SSA-014, SSA-031) | Wired to the real gate and order connector; live chat rehearsed locally for orders on 2026-10-11 (see the SSA-031 section) |
 | Dashboard (SSA-015) | See the SSA-015 section above |
 | Voice | Unfinished; assigned to the other demo issues |
 
@@ -440,32 +525,31 @@ The managed database still holds this rehearsal's rows: two bookings (Test Calle
 Rehearsal Charlie), one denied review (Rehearsal Alpha, which acts as a precedent
 for similar calls), one pending review (Rehearsal Bravo) and three embeddings.
 
-## Testing SSA-005: Booking Calendar & Execution Connector
+## Testing the order connector (SSA-031)
 
-SSA-005 provides in-process booking calendar queries and atomic execution in `backend/connectors/booking.py`:
-- `list_slots(service, day)`: Queries open 30-minute slots and computes available remaining capacity (`capacity - booked`).
-- `execute(action_id)` (aliased as `book(action_id)`): Idempotently validates action state (`allowed` or `pending_review` with `approved`), row-locks slot capacity (`FOR UPDATE`), and writes the booking.
+`backend/connectors/orders.py` replaces the SSA-005 booking calendar.
+`execute(action_id)` validates the action (`place_order`, and `allowed` or
+`pending_review` with an `approved` review), prices the items from the current
+menu, and writes one `orders` row in the same transaction that marks the action
+`executed`.
 
-### How to test:
+```bash
+docker compose up -d db
+export TEST_DATABASE_URL="postgresql://demo:demo@localhost:5432/demo"
+pytest tests/integration/test_orders.py -v
+```
 
-1. Ensure the PostgreSQL container is running:
-   ```bash
-   docker compose up -d db
-   # Note: If port 5432 is already occupied on your host, use DATABASE_PORT=5433 docker compose up -d db
-   ```
+What the tests verify:
 
-2. Point to the test database and run integration tests:
-   ```bash
-   export TEST_DATABASE_URL="postgresql://demo:demo@localhost:5432/demo" # or port 5433
-   pytest tests/integration/test_booking.py -v
-   ```
+- **Idempotency:** executing the same action twice yields exactly one order row.
+- **Server pricing:** the total and per-item prices come from the menu; a price
+  or total in the payload is ignored.
+- **State gate:** actions that are `proposed`, `rejected`, awaiting review, or of
+  the old `book_appointment` type cannot be executed.
+- **Menu changes:** an item removed after the gate decided fails cleanly with
+  state `failed` and no order.
 
-3. What the tests verify:
-   - **Idempotency:** Executing the same action twice yields exactly one booking row.
-   - **Capacity Guard:** Booking a full slot fails cleanly with state `failed` and reason `SLOT_FULL`.
-   - **State Gate:** Actions that are `proposed`, `rejected`, or awaiting review cannot be executed.
-   - **Durability:** Bookings persist in PostgreSQL across connections.
-
+The paragraph below records the original SSA-001 rebuild and predates the order pivot.
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;
@@ -481,11 +565,12 @@ requires a server-owned `CHAT_SESSION_SECRET` (24+ characters) and live
 `OPENAI_API_KEY`; neither is committed. Run `python3 -m backend.scripts.init_db`
 to apply the new `005_ssa014.sql` pending-proposal table after SSA-001 migrations.
 A confirmed proposal now goes through the real gate (SSA-010) and, on `allow`,
-the booking calendar (SSA-005); tests may still inject their own. Set
-`RETRIEVAL_MODE` and `JEV_MODE`, or every bookable request goes to staff review.
+the order connector (SSA-031); tests may still inject their own. Set
+`RETRIEVAL_MODE` and `JEV_MODE`, or every placeable order goes to staff review.
 A spoken yes such as "yeah" or "yes, that's correct" confirms; a reply containing
-a change ("yes, but…") clears the proposal. The service the model sends is matched
-to a seeded service by code or display name and stored as its code. No live
+a change ("yes, but…") clears the proposal. Each item the model sends is matched
+to an active menu item by code or display name and stored as its code; the
+read-back total is computed by the application from menu prices. No live
 Akamai chat call has been verified yet.
 See [SSA-014 integration guide](docs/ssa-014-integration.md) for wiring, tests,
 and safe fallback behavior.

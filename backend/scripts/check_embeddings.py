@@ -38,7 +38,7 @@ def main():
     try:
         recordings = load_recordings(args.recordings) if args.recordings else None
         provider = LiveEmbeddingProvider(settings)
-        vector = provider.embed_transcript("Synthetic smoke check: one haircut tomorrow afternoon.")
+        vector = provider.embed_transcript("Synthetic smoke check: one grilled pork banh mi for pickup.")
         validate_embedding(vector)
         report = {"mode": "live", "model": provider.embedding_model, "dimensions": len(vector)}
         if recordings:

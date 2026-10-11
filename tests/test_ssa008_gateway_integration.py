@@ -8,7 +8,7 @@ from backend.config import Settings
 from backend.memory.precedents import PrecedentService, RetrievalUnavailable, validate_embedding
 from backend.providers.embeddings import FakeEmbeddingProvider, LiveEmbeddingProvider
 from backend.services.gateway import evaluate
-from tests.test_gateway import FakeStore, NOW, proposal
+from tests.test_gateway import FakeStore, proposal
 
 
 @pytest.mark.parametrize("retrieval_mode", ["fake", "live"])
@@ -25,7 +25,7 @@ def test_gateway_uses_persisted_action_and_retrieval_mode(monkeypatch, retrieval
     monkeypatch.setattr(PrecedentService, "retrieve_for_action", fake_persisted_precedents)
     store = FakeStore(proposal())
     settings = Settings(retrieval_mode=retrieval_mode, embedding_mode=embedding_mode, jev_mode="fake")
-    result = evaluate(action_id, now=NOW, store=store, settings=settings)
+    result = evaluate(action_id, store=store, settings=settings)
     assert result.decision == "escalate"
     assert result.risk_level == "high"
     assert "SIMILAR_TO_DENIED" in [r["code"] for r in result.reasons]
@@ -36,13 +36,13 @@ def test_gateway_uses_persisted_action_and_retrieval_mode(monkeypatch, retrieval
     assert store.applied == [result]
 
 
-def test_live_gateway_failure_never_allows_a_booking(monkeypatch):
+def test_live_gateway_failure_never_allows_an_order(monkeypatch):
     def unavailable(self, action_id, k=3):
         raise RetrievalUnavailable("live", "embedding")
 
     monkeypatch.setattr(PrecedentService, "retrieve_for_action", unavailable)
     settings = Settings(retrieval_mode="live", embedding_mode="live", jev_mode="fake")
-    result = evaluate(uuid4(), now=NOW, store=FakeStore(proposal()), settings=settings)
+    result = evaluate(uuid4(), store=FakeStore(proposal()), settings=settings)
     assert result.decision == "escalate"
     assert result.risk_level == "unknown"
     assert "RETRIEVAL_UNAVAILABLE" in [r["code"] for r in result.reasons]

@@ -3,8 +3,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 REASONS = {
-    "GROUP_SIZE": "The group is larger than the automatic booking limit.",
-    "SHORT_NOTICE": "The appointment is sooner than the automatic notice period.",
+    "ORDER_OVER_LIMIT": "The order total is above the automatic limit.",
+    "KEYWORD_RULE": "The caller said a word on a staff-review list.",
     "SIMILAR_TO_DENIED": "A similar past request was denied by staff.",
     "JEV_CONCERN": "Jev flagged a concern for staff to review.",
     "JEV_INSUFFICIENT_CONTEXT": "Jev did not have enough context to assess the request.",
@@ -12,15 +12,24 @@ REASONS = {
     "JEV_NO_CONCERN": "Jev reported no concern; other checks still apply.",
     "JEV_UNAVAILABLE": "Jev was unavailable, so staff review is needed.",
     "RETRIEVAL_UNAVAILABLE": "Past-call retrieval was unavailable.",
-    "UNKNOWN_SERVICE": "The requested service is not available.",
-    "SLOT_UNAVAILABLE": "The requested time is unavailable.",
-    "PARTY_TOO_LARGE": "The group exceeds the maximum permitted size.",
-    "NO_CAPACITY": "The requested slot has insufficient capacity.",
+    "UNKNOWN_ITEM": "A requested item is not on the menu.",
+    "EMPTY_ORDER": "The order had no items.",
 }
 
 
 def reason_text(code):
     return REASONS.get(code, str(code or "Reason not recorded").replace("_", " ").capitalize())
+
+
+def order_items(items):
+    """Counted item list for a proposal (codes) or a placed order (code/name/price)."""
+    if not isinstance(items, list) or not items:
+        return "Not recorded"
+    counts = {}
+    for item in items:
+        label = str(item.get("name") or item.get("code")) if isinstance(item, dict) else str(item)
+        counts[label] = counts.get(label, 0) + 1
+    return ", ".join(f"{count} × {label}" for label, count in counts.items())
 
 
 def business_time(value):
@@ -56,6 +65,7 @@ def case_view(case):
     if providers.get("retrieval") == "live" and providers.get("embeddings") == "fake":
         result["providers"]["retrieval"] = "Fake embeddings (pgvector)"
     result["checks"] = snapshot.get("checks") or []
+    result["order_total"] = snapshot.get("order_total")
     result["precedents"] = snapshot.get("precedents") or []
     result["providers_skipped"] = skipped
     result["jev_reasons"] = [

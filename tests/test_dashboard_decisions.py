@@ -35,7 +35,7 @@ def test_authenticated_decision_redirects_to_authoritative_case(decision):
     assert response.status_code == 200
     assert response.json() == {"redirect": f"/dashboard/cases/{ACTION_ID}"}
     service.decide.assert_called_once_with(ACTION_ID, decision, "Reviewed")
-    assert "booked" not in response.text
+    assert "placed" not in response.text
 
 
 def test_preview_rejects_direct_post():

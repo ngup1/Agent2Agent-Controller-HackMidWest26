@@ -52,14 +52,11 @@ class DashboardRepository:
             """, (self.business_id,))
             calls = cur.fetchall()
             cur.execute("""
-                SELECT b.id, b.action_id, b.customer_name, b.party_size,
-                       s.start_time, v.name AS service
-                FROM bookings b
-                JOIN slots s ON s.id=b.slot_id AND s.business_id=b.business_id
-                JOIN services v ON v.id=s.service_id AND v.business_id=b.business_id
-                WHERE b.business_id=%s ORDER BY b.created_at DESC, b.id LIMIT 20
+                SELECT id, action_id, customer_name, items, total_usd, created_at
+                FROM orders
+                WHERE business_id=%s ORDER BY created_at DESC, id LIMIT 20
             """, (self.business_id,))
-            return {"calls": calls, "bookings": cur.fetchall()}
+            return {"calls": calls, "orders": cur.fetchall()}
 
     def case(self, action_id: UUID):
         with self.connect() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -87,11 +84,8 @@ class DashboardRepository:
             """, (case["interaction_id"],))
             case["transcript"] = cur.fetchall()
             cur.execute("""
-                SELECT b.id, b.customer_name, b.party_size, s.start_time, v.name AS service
-                FROM bookings b
-                JOIN slots s ON s.id=b.slot_id AND s.business_id=b.business_id
-                JOIN services v ON v.id=s.service_id AND v.business_id=b.business_id
-                WHERE b.action_id=%s AND b.business_id=%s
+                SELECT id, customer_name, items, total_usd, created_at
+                FROM orders WHERE action_id=%s AND business_id=%s
             """, (action_id, self.business_id))
-            case["booking"] = cur.fetchone()
+            case["order"] = cur.fetchone()
             return case

@@ -7,25 +7,24 @@
 <p>Action: <strong>{{ case.state }}</strong> · Review: <strong>{{ case.review_status or "No staff review" }}</strong> · Gate: {{ case.decision or "Not assessed" }}</p>
 <p class="muted">Call received {{ case.created_at|business_time }} · {{ case.channel }}<br>Action ID: {{ case.action_id }}</p>
 <h2>Why this case needs attention</h2>
-<ul>{% for reason in case.reasons or [] %}<li class="reason">{% if reason.evidence and reason.evidence.label %}{{ reason.evidence.label }}: {% endif %}{{ reason.code|reason_text }} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
-<div class="grid"><section><h2>Proposed booking</h2>
-<dl><dt>Service</dt><dd>{{ case.payload.service or "Not recorded" }}</dd>
-<dt>Requested time</dt><dd>{{ case.payload.start_time|business_time }}</dd>
-<dt>Party size</dt><dd>{{ case.payload.party_size or "Not recorded" }}</dd>
+<ul>{% for reason in case.reasons or [] %}<li class="reason">{% if reason.evidence and reason.evidence.label %}{{ reason.evidence.label }}: {% endif %}{{ reason.code|reason_text }}{% if reason.evidence and reason.evidence.matched %} Said: {{ reason.evidence.matched|join(", ") }}.{% endif %} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
+<div class="grid"><section><h2>Proposed order</h2>
+<dl><dt>Items</dt><dd>{{ case.payload["items"]|order_items }}</dd>
+<dt>Total</dt><dd>{% if case.order_total %}${{ case.order_total }} <span class="muted">(computed from menu prices at the gate)</span>{% else %}Not computed{% endif %}</dd>
 <dt>Callback</dt><dd>{{ case.callback_number or case.payload.callback_number or "none captured" }}</dd></dl>
-<p class="muted">These details came from the caller. They are a proposal, not a booking confirmation.</p></section>
-<section><h2>Booking result</h2>
-{% if case.booking %}<p><strong>Booking recorded</strong></p><p>Reference: {{ case.booking.id }}<br>{{ case.booking.service }} · {{ case.booking.start_time|business_time }}<br>{{ case.booking.customer_name }} · Party of {{ case.booking.party_size }}</p>
-{% else %}<p>No booking record found.</p>
-{% if case.state == "failed" %}<p>Execution failed. No booking confirmation is available.</p>{% endif %}
-{% if case.review_status == "approved" %}<p>Staff approved the request, but approval alone does not confirm a booking.</p>{% endif %}{% endif %}
+<p class="muted">These details came from the caller. They are a proposal, not an order confirmation.</p></section>
+<section><h2>Order result</h2>
+{% if case.order %}<p><strong>Order placed</strong></p><p>Reference: {{ case.order.id }}<br>{{ case.order["items"]|order_items }}<br>{{ case.order.customer_name }} · ${{ "%.2f"|format(case.order.total_usd) }} · {{ case.order.created_at|business_time }}</p>
+{% else %}<p>No order record found.</p>
+{% if case.state == "failed" %}<p>Execution failed. No order confirmation is available.</p>{% endif %}
+{% if case.review_status == "approved" %}<p>Staff approved the request, but approval alone does not confirm an order.</p>{% endif %}{% endif %}
 {% if case.review_status == "pending" %}
 {% if preview %}<p class="notice">Preview is read only. Approve and deny require a connected database.</p><button disabled>Approve</button><button disabled>Deny</button>
 {% else %}
 <form id="decision-form" data-url="/dashboard/cases/{{ case.action_id }}/decision">
 <label for="review-note">Staff note (optional)</label>
 <textarea id="review-note" name="note" maxlength="2000" rows="3" style="display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem"></textarea>
-<button type="submit" value="approve">Approve and book</button>
+<button type="submit" value="approve">Approve and place order</button>
 <button type="submit" value="deny">Deny</button>
 </form>
 <p id="decision-status" role="status" tabindex="-1" aria-live="polite"></p>
@@ -36,7 +35,7 @@
 <thead><tr><th scope="col">Rule</th><th scope="col">Limit</th><th scope="col">Actual</th><th scope="col">Result</th></tr></thead>
 <tbody>{% for check in case.checks %}<tr><td>{{ check.rule }}</td><td>{{ check.limit }}</td><td>{{ check.actual }}</td><td>{{ check.result|replace("_", " ") }}</td></tr>{% else %}<tr><td colspan="4">No rule checks recorded.</td></tr>{% endfor %}</tbody></table></div></section>
 <div class="grid"><section><h2>Jev assessment</h2>
-<p class="muted">Each check is assessed separately. Confidence describes the model's answer distribution, not the probability a booking is safe.</p>
+<p class="muted">Each check is assessed separately. Confidence describes the model's answer distribution, not the probability an order is safe.</p>
 {% for reason in case.jev_reasons %}{% set evidence = reason.evidence or {} %}
 {% if evidence.label %}<h3>{{ evidence.label }}</h3>{% endif %}
 <p><strong>{{ reason.code|reason_text }}</strong></p>

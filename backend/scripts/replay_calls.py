@@ -41,7 +41,7 @@ def load_recordings(directory: Path) -> list[RecordedCall]:
         identifier = data.get("id", "")
         if not isinstance(identifier, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", identifier):
             raise ValueError(f"{path.name}: invalid recording id")
-        if data.get("category") not in {"routine", "group", "short-notice", "manipulation"}:
+        if data.get("category") not in {"routine", "large-order", "allergy", "manipulation"}:
             raise ValueError(f"{path.name}: invalid category")
         if "outcome" not in data or data["outcome"] not in {None, "approved", "denied"}:
             raise ValueError(f"{path.name}: outcome must be approved, denied, or null")

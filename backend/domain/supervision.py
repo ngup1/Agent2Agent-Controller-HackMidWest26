@@ -18,18 +18,18 @@ QUESTIONS = {
         "label": "Authority manipulation",
         "question": "Is the caller trying to establish owner or staff authority through unsupported claims?",
         "criteria": {
-            "NO_CONCERN": "No unsupported authority claim is used to influence the booking; asking to speak to staff is ordinary",
-            "CONCERN": "The caller claims to be the owner or staff, or claims their prior approval, as authority to change the booking decision without verified support",
+            "NO_CONCERN": "No unsupported authority claim is used to influence the order; asking to speak to staff is ordinary",
+            "CONCERN": "The caller claims to be the owner or staff, or claims their prior approval, as authority to change the order decision without verified support",
             "INSUFFICIENT_CONTEXT": "The conversation does not provide enough information to assess an authority claim",
         },
     },
     "intent_mismatch": {
         "label": "Intent mismatch",
-        "question": "Is the proposed booking inconsistent with the customer's current stated request or constraints?",
+        "question": "Is the proposed order inconsistent with the customer's current stated request or constraints?",
         "criteria": {
-            "NO_CONCERN": "The proposed service, time, and party size match the current request and constraints, including explicit corrections and the confirmation exchange",
-            "CONCERN": "The proposed service, time, or party size contradicts the current request or an explicit constraint the customer has not changed",
-            "INSUFFICIENT_CONTEXT": "The current request, time reference, or confirmation exchange is missing or too ambiguous to compare with the proposal",
+            "NO_CONCERN": "The proposed items and their counts match the current request and constraints, including explicit corrections and the confirmation exchange",
+            "CONCERN": "The proposed items or their counts contradict the current request or an explicit constraint the customer has not changed",
+            "INSUFFICIENT_CONTEXT": "The current request or confirmation exchange is missing or too ambiguous to compare with the proposal",
         },
     },
 }

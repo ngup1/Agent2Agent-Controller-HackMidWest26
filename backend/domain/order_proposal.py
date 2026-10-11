@@ -1,34 +1,47 @@
-"""SSA-014: untrusted, booking-only LLM tool arguments (demo spec v0.2.0).
+"""SSA-031: untrusted, order-only LLM tool arguments.
 
-Structural validation is NOT authorization. The SSA-010 gate checks service,
-real slot, notice, capacity, and business rules after explicit confirmation.
-Requires Pydantic v2. Compatible with Python 3.10+.
+Structural validation is NOT authorization. The gate checks the menu, the
+order total and the keyword rules after explicit confirmation. The model
+never supplies a price or a total; the server computes both from the menu.
 """
 from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+MAX_ITEMS = 40
 
 
-class BookingProposal(BaseModel):
+def _reject_control_characters(value: str) -> str:
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError("Control characters are not permitted")
+    return value
+
+
+class OrderProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    service: str = Field(min_length=1, max_length=80)
-    start_time: AwareDatetime
-    party_size: int = Field(strict=True, ge=1, le=100)
+    # One entry per item ordered; an item may repeat. There is no quantity field.
+    items: list[str] = Field(min_length=1, max_length=MAX_ITEMS)
     customer_name: str = Field(min_length=1, max_length=80)
     callback_number: str | None = Field(default=None, max_length=32)
 
-    @field_validator("service", "customer_name")
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not isinstance(item, str) or not 1 <= len(item.strip()) <= 80:
+                raise ValueError("Each item must be 1-80 characters")
+            _reject_control_characters(item)
+        return [item.strip() for item in value]
+
+    @field_validator("customer_name")
     @classmethod
     def reject_control_characters(cls, value: str) -> str:
-        if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
-            raise ValueError("Control characters are not permitted")
-        return value
+        return _reject_control_characters(value)
 
     @field_validator("callback_number")
     @classmethod
@@ -57,8 +70,8 @@ def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return output
 
 
-def parse_booking_arguments(raw: str | dict[str, Any]) -> BookingProposal:
-    """Reject malformed JSON, unknown keys and forbidden authorization fields."""
+def parse_order_arguments(raw: str | dict[str, Any]) -> OrderProposal:
+    """Reject malformed JSON, unknown keys (prices, totals) and authorization fields."""
     if isinstance(raw, str):
         if len(raw) > 4096:
             raise ValueError("Tool arguments are too large")
@@ -72,4 +85,4 @@ def parse_booking_arguments(raw: str | dict[str, Any]) -> BookingProposal:
         raise ValueError("Tool arguments must be a JSON object")
     if not isinstance(parsed, dict):
         raise ValueError("Tool arguments must be a JSON object")
-    return BookingProposal.model_validate(parsed)
+    return OrderProposal.model_validate(parsed)

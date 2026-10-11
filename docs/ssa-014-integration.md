@@ -4,7 +4,7 @@ This patch is based on the user-provided `main-after-ssa001.zip`. The old 002, 0
 
 ## New/updated pieces
 
-- `backend/domain/booking_proposal.py`: strict booking-only `propose_booking` schema (`service`, offset-aware `start_time`, `party_size`, `customer_name`, optional `callback_number`). No authorization fields accepted.
+- `backend/domain/order_proposal.py`: strict order-only `propose_order` schema (`items`, `customer_name`, optional `callback_number`), which replaced the booking proposal in SSA-031. No authorization, price or total fields accepted. Where the rest of this guide says "booking", read "order".
 - `backend/services/booking_chat.py`: workshop chat via one *proposal-only* tool. A 429 gets **one** short, bounded retry; no silent fake fallback.
 - `backend/services/conversation.py`: `async handle_turn(interaction_id, text) -> str`, persists turns, deterministic read-back, later yes, calls gateway, then guarded execution. Success wording requires a committed booking row. Uses exact v0.2 escalation text.
 - `backend/database/conversation_repository.py`: business-scoped adapter **using** SSA-001 `TranscriptRepository` methods. Does not replace it.
@@ -27,7 +27,7 @@ This patch is based on the user-provided `main-after-ssa001.zip`. The old 002, 0
    ```
 
    Check `compose.yaml` service names first if they've changed; the original SSA-001 Compose names its app `app`.
-5. `curl -X POST http://127.0.0.1:8000/chat -H 'Content-Type: application/json' -d '{"text":"Book a haircut tomorrow at 3 PM for Sam"}'`. Keep the returned `interaction_id` and `conversation_token` for turn 2. This may request clarification depending on model behavior; the sandbox did **not** run live inference.
+5. `curl -X POST http://127.0.0.1:8000/chat -H 'Content-Type: application/json' -d '{"text":"One grilled pork banh mi for Sam"}'`. Keep the returned `interaction_id` and `conversation_token` for turn 2. This may request clarification depending on model behavior; the sandbox did **not** run live inference.
 6. After reading back the proposed booking, send `{"interaction_id":"...","conversation_token":"...","text":"yes"}`. **Until SSA-010 and SSA-005 are plugged in, the action is proposed but NO booking is made.**
 
 ## Neighbors: exact integration boundary

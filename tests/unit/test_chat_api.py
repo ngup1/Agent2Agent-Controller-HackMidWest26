@@ -5,24 +5,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.api.chat import create_chat_router
-from backend.domain.booking_proposal import parse_booking_arguments
+from backend.domain.order_proposal import parse_order_arguments
 from backend.services.booking_chat import ChatTurn
 from backend.services.conversation import ConversationService
 from tests.unit.fakes_ssa014 import FakeChat, FakeExecutor, FakeGateway, FakeRepository
 
 
-PAYLOAD = {
-    "service": "haircut",
-    "start_time": "2026-10-12T15:00:00-05:00",
-    "party_size": 1,
-    "customer_name": "Sam",
-}
+PAYLOAD = {"items": ["grilled_pork"], "customer_name": "Sam"}
 
 
 def build_app(business_id=None, repo=None):
     repo = repo or FakeRepository()
     business_id = business_id or uuid4()
-    chat = FakeChat(ChatTurn(proposal=parse_booking_arguments(PAYLOAD)))
+    chat = FakeChat(ChatTurn(proposal=parse_order_arguments(PAYLOAD)))
     gate = FakeGateway()
     executor = FakeExecutor(repo)
     conversation = ConversationService(repository=repo, chat=chat, gateway=gate, executor=executor)
@@ -36,13 +31,13 @@ def build_app(business_id=None, repo=None):
     return TestClient(app), repo, business_id, gate, executor
 
 
-def test_post_chat_two_turn_one_booking():
+def test_post_chat_two_turn_one_order():
     client, repo, business_id, gate, executor = build_app()
     first = client.post("/chat", json={"text": "Book a haircut tomorrow at three."})
     assert first.status_code == 200
     first_json = first.json()
     assert "Is that correct?" in first_json["reply"]
-    assert repo.bookings == {}
+    assert repo.orders == {}
     assert all(v["business_id"] == business_id for v in repo.interactions.values())
     second = client.post("/chat", json={
         "text": "yes",
@@ -50,15 +45,15 @@ def test_post_chat_two_turn_one_booking():
         "conversation_token": first_json["conversation_token"],
     })
     assert second.status_code == 200
-    assert "booked" in second.json()["reply"]
-    assert len(repo.bookings) == len(gate.calls) == len(executor.calls) == 1
+    assert "order is placed" in second.json()["reply"]
+    assert len(repo.orders) == len(gate.calls) == len(executor.calls) == 1
     duplicate = client.post("/chat", json={
         "text": "yes",
         "interaction_id": first_json["interaction_id"],
         "conversation_token": first_json["conversation_token"],
     })
     assert duplicate.status_code == 200
-    assert len(repo.bookings) == 1
+    assert len(repo.orders) == 1
 
 
 def test_existing_id_without_token_is_invalid():

@@ -13,13 +13,15 @@ This guide applies to Claude, Codex, and human contributors. It describes the ag
 
 `spec-2.md`, teaching material, and existing prototype code are supporting context, not substitutes for `spec.md`.
 
-The demo covers eleven issues: SSA-001, 005, 008, 009, 010, 014, 015, 021, 022, 023, and 030. Together they deliver one flow: a spoken request (browser microphone first, then a phone call), a booking proposal, a gate using rules, similar past calls that staff decided, and Jev, then either a booking or a staff review with a promised callback. Every other SSA issue is deferred or folded into one of these; see `spec.md` Section 16.2. Do not expand scope without a task requiring it.
+**Order pivot (2026-10-11, SSA-031):** the demo business is now a banh mi shop taking orders. Where this guide says "booking", read "order"; the current proposal, rules and reason codes are in the Demo scope section of `spec.md`.
+
+The demo covers eleven issues: SSA-001, 005, 008, 009, 010, 014, 015, 021, 022, 023, and 030, plus SSA-031. Together they deliver one flow: a spoken request (browser microphone first, then a phone call), a booking proposal, a gate using rules, similar past calls that staff decided, and Jev, then either a booking or a staff review with a promised callback. Every other SSA issue is deferred or folded into one of these; see `spec.md` Section 16.2. Do not expand scope without a task requiring it.
 
 ## Target structure
 
 Create modules when their issues require them; this tree is a target, not a requirement to populate empty scaffolding immediately. Python package directories need `__init__.py` where appropriate.
 
-For the demo, skip `worker.py`, `auth/`, `mock_booking/`, `evaluation/`, `tests/regression/`, `tests/browser/`, and Alembic. The booking calendar is in-process in `backend/connectors/booking.py`, migrations are the plain SQL files from `origin/databases`, and the phone transport lives in `backend/api/voice.py`.
+For the demo, skip `worker.py`, `auth/`, `mock_booking/`, `evaluation/`, `tests/regression/`, `tests/browser/`, and Alembic. The order connector is in-process in `backend/connectors/orders.py` (it replaced the booking calendar in SSA-031), migrations are the plain SQL files from `origin/databases`, and the phone transport lives in `backend/api/voice.py`.
 
 ```text
 AGENTS.md
@@ -104,7 +106,7 @@ GitHub assignees are the source of truth. These are the demo lanes:
 |---|---|---|
 | Foundation and deployment | Scaffold, schema, seed, Akamai, demo packaging | SSA-001, 021, 022 |
 | Voice | Browser microphone first, then the Twilio webhook and ConversationRelay WebSocket | SSA-030, 023 |
-| Receptionist | Conversation service and the `propose_booking` tool | SSA-014 |
+| Receptionist | Conversation service and the `propose_order` tool | SSA-014, 031 |
 | Evidence | Precedent retrieval from staff-decided calls, and the Jev decision | SSA-008, 009 |
 | Gate and execution | Rules, gate composition, mock booking calendar | SSA-010, 005 |
 | Dashboard | Review queue, evidence, approve or reject | SSA-015 |
