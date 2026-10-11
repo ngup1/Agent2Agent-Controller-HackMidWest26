@@ -73,3 +73,56 @@ def case_view(case):
         if str(reason.get("code", "")).startswith("JEV_")
     ]
     return result
+
+
+def _attention(reasons):
+    """Short, de-duplicated statements for the reasons that sent a call to staff."""
+    lines = []
+    for item in reasons or []:
+        if not isinstance(item, dict) or item.get("effect") != "escalate":
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        line = str(evidence.get("label") or reason_text(item.get("code")))
+        if line not in lines:
+            lines.append(line)
+    return " · ".join(lines) or "Waiting for a staff decision."
+
+
+def board_columns(rows):
+    """Sort calls into the three board columns. Display only; no state changes.
+
+    A call with no outcome is shown as in progress while it is recent and is
+    left off the board afterwards, because calls are never marked as ended.
+    """
+    columns = {"in_progress": [], "fulfilled": [], "needs_action": []}
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        name = row.get("order_name") or payload.get("customer_name")
+        number = row.get("callback_number") or payload.get("callback_number")
+        card = {
+            "who": " · ".join(str(part) for part in (name, number) if part) or "Unknown caller",
+            "action_id": row.get("action_id"), "created_at": row.get("created_at"),
+            "channel": row.get("channel"),
+        }
+        review, state = row.get("review_status"), row.get("state")
+        requested = order_items(payload.get("items"))
+        if row.get("order_id") or state == "executed":
+            placed = (f"{order_items(row['order_items'])} · ${row['total_usd']:.2f}"
+                      if row.get("order_id") else requested)
+            prefix = "Approved by staff. " if review == "approved" else ""
+            card.update(kind="fulfilled", statement=f"{prefix}Order placed: {placed}")
+            columns["fulfilled"].append(card)
+        elif review == "denied":
+            card.update(kind="declined", statement=f"Declined by staff. No order placed. Requested: {requested}")
+            columns["fulfilled"].append(card)
+        elif review == "pending":
+            card.update(kind="needs_action", statement=_attention(row.get("reasons")), detail=requested)
+            columns["needs_action"].append(card)
+        elif state == "failed" or review == "approved":
+            card.update(kind="needs_action", statement="The order could not be placed. Check the case.",
+                        detail=requested)
+            columns["needs_action"].append(card)
+        elif row.get("recent"):
+            card.update(kind="in_progress", statement="In progress")
+            columns["in_progress"].append(card)
+    return columns

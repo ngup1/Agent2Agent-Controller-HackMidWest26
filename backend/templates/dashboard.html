@@ -1,25 +1,16 @@
 {% extends "base.html" %}
+{% block page %}home{% endblock %}
 {% block content %}
-<section><h2>Review queue</h2><p class="muted">Pending first, oldest pending first. Showing up to 100 reviews. Queue refreshes every 5 seconds.</p>
-<div id="queue-content">{% include "queue.html" %}</div>
-<p id="refresh-status" class="muted" role="status" aria-live="polite">Automatic refresh enabled.</p></section>
-{% if error %}<p class="notice error" role="alert">{{ error }} Recent calls and orders are unavailable.</p>{% endif %}
-<div class="grid"><section><h2>Recent calls</h2><p class="muted">Latest 20 calls. Reload the page to update history.</p>
-{% for call in calls %}<p>{% if call.action_id %}<a href="/dashboard/cases/{{ call.action_id }}">{{ call.channel }} call · {{ call.created_at|business_time }}</a>{% else %}{{ call.channel }} call · {{ call.created_at|business_time }}{% endif %}
-<br>Status: {{ call.status }} · Callback: {{ call.callback_number or "none captured" }}</p>
-{% else %}<p>{{ "Calls unavailable." if error else "No calls recorded." }}</p>{% endfor %}</section>
-<section><h2>Recent orders</h2><p class="muted">Latest 20 placed orders.</p>
-{% for order in orders %}<p><a href="/dashboard/cases/{{ order.action_id }}">{{ order.customer_name }} · ${{ "%.2f"|format(order.total_usd) }}</a><br>{{ order["items"]|order_items }}<br>{{ order.created_at|business_time }} · Reference: {{ order.id }}</p>
-{% else %}<p>{{ "Orders unavailable." if error else "No orders recorded." }}</p>{% endfor %}</section></div>
+<div id="board-content">{% include "board.html" %}</div>
+<p id="refresh-status" class="muted" role="status" aria-live="polite">Latest 100 calls. Refreshes every 5 seconds. A call with no outcome leaves the in-progress column after 10 minutes without activity.</p>
 {% endblock %}
 {% block scripts %}<script>
 (() => {
-  const target = document.getElementById("queue-content");
+  const target = document.getElementById("board-content");
   const status = document.getElementById("refresh-status");
   async function refresh() {
-    if (target.contains(document.activeElement)) { setTimeout(refresh, 5000); return; }
     try {
-      const response = await fetch("/dashboard/queue", {
+      const response = await fetch("/dashboard/board", {
         credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)
       });
       if (response.status === 401 || response.status === 403) {
@@ -30,10 +21,9 @@
       // Only escaped, same-origin Jinja markup is inserted.
       const markup = await response.text();
       if (!target.contains(document.activeElement)) target.innerHTML = markup;
-      status.textContent = "Queue checked at " + new Date().toLocaleTimeString() + " (your local time).";
+      status.textContent = "Checked at " + new Date().toLocaleTimeString() + " (your local time). Refreshes every 5 seconds.";
     } catch {
-      target.textContent = "Queue unavailable. Retrying automatically; the previous queue may be out of date.";
-      status.textContent = "Refresh failed. Retrying in 5 seconds.";
+      status.textContent = "Refresh failed, so the requests shown may be out of date. Retrying in 5 seconds.";
     }
     setTimeout(refresh, 5000);
   }

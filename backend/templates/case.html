@@ -1,40 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Case evidence · Staff dashboard{% endblock %}
-{% block heading %}Case evidence{% endblock %}
+{% block title %}Request · Incoming Request Logs{% endblock %}
 {% block content %}
-<p><a href="/dashboard">← Back to review queue</a></p>
-<section><h2>{{ case.payload.customer_name or "Unnamed caller" }}</h2>
-<p>Action: <strong>{{ case.state }}</strong> · Review: <strong>{{ case.review_status or "No staff review" }}</strong> · Gate: {{ case.decision or "Not assessed" }}</p>
-<p class="muted">Call received {{ case.created_at|business_time }} · {{ case.channel }}<br>Action ID: {{ case.action_id }}</p>
-<h2>Why this case needs attention</h2>
-<ul>{% for reason in case.reasons or [] %}<li class="reason">{% if reason.evidence and reason.evidence.label %}{{ reason.evidence.label }}: {% endif %}{{ reason.code|reason_text }}{% if reason.evidence and reason.evidence.matched %} Said: {{ reason.evidence.matched|join(", ") }}.{% endif %} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
-<div class="grid"><section><h2>Proposed order</h2>
-<dl><dt>Items</dt><dd>{{ case.payload["items"]|order_items }}</dd>
-<dt>Total</dt><dd>{% if case.order_total %}${{ case.order_total }} <span class="muted">(computed from menu prices at the gate)</span>{% else %}Not computed{% endif %}</dd>
-<dt>Callback</dt><dd>{{ case.callback_number or case.payload.callback_number or "none captured" }}</dd></dl>
-<p class="muted">These details came from the caller. They are a proposal, not an order confirmation.</p></section>
-<section><h2>Order result</h2>
+{% set kind = "fulfilled" if case.order else "needs_action" if case.review_status == "pending" or case.state == "failed" else "declined" %}
+<p><a href="/dashboard">← Back to requests</a></p>
+<section class="panel {{ kind }}" style="border-left:4px solid var(--tone)"><h2>Caller information</h2>
+<dl><dt>Name given</dt><dd>{{ case.payload.customer_name or "Unnamed caller" }}</dd>
+<dt>Number</dt><dd>{{ case.callback_number or case.payload.callback_number or "none captured" }}</dd>
+<dt>Channel</dt><dd>{{ case.channel }}</dd>
+<dt>Received</dt><dd>{{ case.created_at|business_time }}</dd></dl>
+<p><span class="badge {{ kind }}">Action: {{ case.state }}</span><span class="badge">Review: {{ case.review_status or "No staff review" }}</span><span class="badge">Gate: {{ case.decision or "Not assessed" }}</span></p>
+<p class="muted">The name and number came from the caller and are not verified. Action ID: {{ case.action_id }}</p></section>
+<div class="grid"><section class="panel"><h2>Result</h2>
 {% if case.order %}<p><strong>Order placed</strong></p><p>Reference: {{ case.order.id }}<br>{{ case.order["items"]|order_items }}<br>{{ case.order.customer_name }} · ${{ "%.2f"|format(case.order.total_usd) }} · {{ case.order.created_at|business_time }}</p>
 {% else %}<p>No order record found.</p>
 {% if case.state == "failed" %}<p>Execution failed. No order confirmation is available.</p>{% endif %}
 {% if case.review_status == "approved" %}<p>Staff approved the request, but approval alone does not confirm an order.</p>{% endif %}{% endif %}
+<h3>Requested order</h3>
+<dl><dt>Items</dt><dd>{{ case.payload["items"]|order_items }}</dd>
+<dt>Total</dt><dd>{% if case.order_total %}${{ case.order_total }} <span class="muted">(computed from menu prices at the gate)</span>{% else %}Not computed{% endif %}</dd></dl>
+<p class="muted">The requested items came from the caller. They are a proposal, not an order confirmation.</p>
 {% if case.review_status == "pending" %}
 {% if preview %}<p class="notice">Preview is read only. Approve and deny require a connected database.</p><button disabled>Approve</button><button disabled>Deny</button>
 {% else %}
 <form id="decision-form" data-url="/dashboard/cases/{{ case.action_id }}/decision">
 <label for="review-note">Staff note (optional)</label>
-<textarea id="review-note" name="note" maxlength="2000" rows="3" style="display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem"></textarea>
-<button type="submit" value="approve">Approve and place order</button>
-<button type="submit" value="deny">Deny</button>
+<textarea id="review-note" name="note" maxlength="2000" rows="3" style="margin-bottom:.8rem"></textarea>
+<button type="submit" value="approve" class="primary">Approve and place order</button>
+<button type="submit" value="deny" class="danger">Deny</button>
 </form>
 <p id="decision-status" role="status" tabindex="-1" aria-live="polite"></p>
 <noscript>JavaScript is required to submit a staff decision.</noscript>
 {% endif %}{% endif %}
-{% if case.note %}<p>Staff note: {{ case.note }}</p>{% endif %}</section></div>
-<section><h2>Rule-by-rule checks</h2><div class="table-wrap"><table>
+{% if case.note %}<p>Staff note: {{ case.note }}</p>{% endif %}</section>
+<section class="panel"><h2>Why this case needs attention</h2>
+<ul>{% for reason in case.reasons or [] %}<li class="reason">{% if reason.evidence and reason.evidence.label %}{{ reason.evidence.label }}: {% endif %}{{ reason.code|reason_text }}{% if reason.evidence and reason.evidence.matched %} Said: {{ reason.evidence.matched|join(", ") }}.{% endif %} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section></div>
+<section class="panel"><h2>Rules that took effect</h2><div class="table-wrap"><table>
 <thead><tr><th scope="col">Rule</th><th scope="col">Limit</th><th scope="col">Actual</th><th scope="col">Result</th></tr></thead>
 <tbody>{% for check in case.checks %}<tr><td>{{ check.rule }}</td><td>{{ check.limit }}</td><td>{{ check.actual }}</td><td>{{ check.result|replace("_", " ") }}</td></tr>{% else %}<tr><td colspan="4">No rule checks recorded.</td></tr>{% endfor %}</tbody></table></div></section>
-<div class="grid"><section><h2>Jev assessment</h2>
+<section class="panel"><h2>Assessment</h2>
+<p><span class="badge">Embeddings / retrieval: {{ case.providers.retrieval }}</span><span class="badge">Jev: {{ case.providers.jev }}</span></p>
+<p class="muted">Fake or live describes configuration at assessment time, not proof of a successful live call.</p>
+<div class="grid"><div><p class="sub">Jev supervisor</p>
 <p class="muted">Each check is assessed separately. Confidence describes the model's answer distribution, not the probability an order is safe.</p>
 {% for reason in case.jev_reasons %}{% set evidence = reason.evidence or {} %}
 {% if evidence.label %}<h3>{{ evidence.label }}</h3>{% endif %}
@@ -48,11 +54,11 @@
 {% if evidence.probabilities %}<details><summary>Answer probabilities</summary><dl>
 {% for verdict, probability in evidence.probabilities.items() %}<dt>{{ verdict }}</dt><dd>{{ probability|percentage }}</dd>{% endfor %}
 </dl></details>{% endif %}
-{% else %}<p>{{ "Not checked: this request needs clarification before provider assessment." if case.providers_skipped else "No Jev assessment recorded." }}</p>{% endfor %}</section>
-<section><h2>Nearest precedents</h2><p class="muted">Nearest first. Similarity compares requests; it is not an attack probability. Approved precedents do not override rules.</p>
+{% else %}<p>{{ "Not checked: this request needs clarification before provider assessment." if case.providers_skipped else "No Jev assessment recorded." }}</p>{% endfor %}</div>
+<div><p class="sub">Similar past calls</p><p class="muted">Nearest first. Similarity compares requests; it is not an attack probability. Approved precedents do not override rules.</p>
 {% for precedent in case.precedents %}<p><strong>{{ precedent.outcome|capitalize }} · Similarity {{ precedent.similarity|percentage }}</strong><br>{{ precedent.summary }}<br><span class="muted">Call: {{ precedent.interaction_id }}</span></p>
-{% else %}<p>{{ "Not checked: no retrieval was run for this clarification." if case.providers_skipped else "No precedents recorded." }}</p>{% endfor %}</section></div>
-<section><h2>Call transcript</h2><ul class="transcript">{% for segment in case.transcript %}<li><strong>{{ segment.speaker|replace("_", " ")|capitalize }}</strong><p>{{ segment.content }}</p></li>{% else %}<li>No transcript recorded.</li>{% endfor %}</ul></section>
+{% else %}<p>{{ "Not checked: no retrieval was run for this clarification." if case.providers_skipped else "No precedents recorded." }}</p>{% endfor %}</div></div></section>
+<section class="panel"><h2>Call transcript</h2><ul class="transcript">{% for segment in case.transcript %}<li class="{{ 'caller' if segment.speaker == 'caller' else 'agent' }}"><strong>{{ segment.speaker|replace("_", " ")|capitalize }}</strong><p>{{ segment.content }}</p></li>{% else %}<li>No transcript recorded.</li>{% endfor %}</ul></section>
 {% endblock %}
 {% block scripts %}
 <script>

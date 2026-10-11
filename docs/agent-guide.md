@@ -141,7 +141,7 @@ For the demo, follow "Rules that still hold" in the spec's Demo scope section. T
 
 ## Frontend conventions
 
-Use server-rendered Jinja2 HTML and small same-origin JavaScript modules. A React build is not required. For the demo, implement only the review queue, the case page, the recent calls and bookings list, and the live/fake provider badges (SSA-015).
+Use server-rendered Jinja2 HTML and small same-origin JavaScript modules. A React build is not required. For the demo, implement only the three-column request board, the case page with its live/fake provider badges, and the JSON settings page (SSA-015, issue #38).
 
 Escape untrusted text, enforce authorization server-side, support keyboard access and small screens, and display readable states. Separate claimed facts from verified facts, review approval from execution success, and configured providers from successful live calls. Handle stale/conflicting submissions with a refresh path. Avoid an uncalibrated maliciousness percentage.
 

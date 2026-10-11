@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Settings · Incoming Request Logs{% endblock %}
+{% block content %}
+<p><a href="/dashboard">← Back to requests</a></p>
+<section class="panel"><h2>Shop settings</h2>
+<p class="muted">Changes apply to the next call. Nothing is saved unless the whole form is valid.</p>
+<form id="settings-form">
+<label for="shop-name">Shop name</label>
+<input type="text" id="shop-name" maxlength="80" value="{{ shop_name }}" required>
+<p class="muted">Shown at the top of this dashboard and said in the phone greeting.</p>
+<label for="shop-config">Menu and rules (JSON)</label>
+<textarea id="shop-config" class="code" spellcheck="false" aria-describedby="config-help">{{ config }}</textarea>
+<div id="config-help" class="muted">
+<p><strong>menu</strong>: one entry per item, as <code>"code": {"name": "...", "price": 8.50}</code>. Codes use lowercase letters, digits and underscores. An item you remove stops being offered; past orders keep it.</p>
+<p><strong>rules.max_order_total_auto</strong>: orders above this total go to staff. <strong>rules.keyword_rules</strong>: if the caller says any listed word, the order goes to staff under that label.</p></div>
+<p style="margin-top:1rem"><button type="submit" class="primary"{% if preview %} disabled{% endif %}>Save settings</button>
+<button type="button" id="restore" class="danger"{% if preview %} disabled{% endif %}>Restore banh mi example</button></p>
+{% if preview %}<p class="notice">Preview is read only. Saving requires a connected database.</p>{% endif %}
+</form>
+<p id="settings-status" role="status" tabindex="-1" aria-live="polite"></p>
+<noscript>JavaScript is required to save settings.</noscript></section>
+{% endblock %}
+{% block scripts %}<script>
+(() => {
+  const form = document.getElementById("settings-form");
+  const status = document.getElementById("settings-status");
+  let busy = false;
+  async function send(url, body, working) {
+    if (busy) return;
+    busy = true;
+    status.textContent = working;
+    try {
+      const response = await fetch(url, {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body), signal: AbortSignal.timeout(15000)
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        status.textContent = typeof result.detail === "string" ? result.detail : "Nothing was saved. Check the form.";
+        status.focus(); busy = false; return;
+      }
+      window.location.assign(result.redirect);
+    } catch {
+      status.textContent = "The result could not be confirmed. Reload the page to see what is stored.";
+      status.focus(); busy = false;
+    }
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    send("/dashboard/settings", {
+      name: document.getElementById("shop-name").value,
+      config: document.getElementById("shop-config").value
+    }, "Saving…");
+  });
+  document.getElementById("restore").addEventListener("click", () => {
+    if (confirm("Replace the shop name, menu and rules with the banh mi example? Calls and orders are kept."))
+      send("/dashboard/settings/restore", {}, "Restoring the example…");
+  });
+})();
+</script>{% endblock %}
