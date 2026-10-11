@@ -274,8 +274,8 @@ substitute a fake client.
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database and Linode deployment (SSA-021) | Deployed 2026-10-10 at `https://172-232-10-159.sslip.io`; HTTPS health, managed database and booking-after-restart verified; Twilio check pending. See the section below |
-| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; live retrieval rehearsal pending |
-| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; recordings/calibration pending |
+| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; one live retrieval rehearsal run on the deployed host (see SSA-021 section) |
+| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; live recall rehearsed once on the deployed host; recordings and threshold calibration pending |
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
 | Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
@@ -349,6 +349,37 @@ Checked locally only: the compose stack with a throwaway PostgreSQL container an
 `DOMAIN=localhost` answered `/healthz` through Caddy over HTTPS, redirected port 80,
 and stayed healthy after an app restart. The script's `plan`, `env`, `allow-me` and
 guard paths were run against a stubbed `linode-cli` before the first real `apply`.
+
+### Live rehearsal on the deployed host (2026-10-10)
+
+Run through `POST /chat` at `https://172-232-10-159.sslip.io` with live
+`hackathon-chat`, `RETRIEVAL_MODE=live` (live `hackathon-embedding`) and
+`JEV_MODE=fake`. One run, three calls; not a calibration.
+
+| Call | Outcome | Nearest precedent |
+|---|---|---|
+| Haircuts for three, Monday 2 pm | Escalated on `GROUP_SIZE`; denied on the dashboard | None (no decided calls yet) |
+| Haircuts for three, Monday 3 pm | Escalated, risk high, `SIMILAR_TO_DENIED` added | The first call, denied, similarity 0.96 |
+| Beard trim for one, Monday 11 am | Booked automatically | The first call, denied, similarity 0.78 (below 0.80, no flag) |
+
+What it showed:
+
+- Live recall works end to end: embed, store, pgvector search, gate reason and
+  evidence on the case.
+- `PRECEDENT_SIMILARITY_MIN=0.80` has little margin. An unrelated routine request
+  scored 0.78 against a denied group booking. One sample only; calibrate on more
+  calls before changing it.
+- Chat replies took 3.7 to 12.5 seconds, against a 12-second model timeout in
+  `backend/main.py`. One attempt at 12.5 seconds returned the "I couldn't
+  understand that request" fallback and succeeded when repeated.
+- A rejected or timed-out model call reaches the caller as that same fallback and
+  writes nothing to the logs, so an invalid API key looks like a misunderstanding.
+- The seed creates three days of slots from the day it runs; a request for the
+  fourth day was refused as unavailable. Each `apply` re-seeds.
+
+The managed database still holds this rehearsal's rows: two bookings (Test Caller,
+Rehearsal Charlie), one denied review (Rehearsal Alpha, which acts as a precedent
+for similar calls), one pending review (Rehearsal Bravo) and three embeddings.
 
 ## Testing SSA-005: Booking Calendar & Execution Connector
 
