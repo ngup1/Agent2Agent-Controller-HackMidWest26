@@ -1,0 +1,45 @@
+# SSA-021 cloud stack: the app behind Caddy, using Akamai Managed PostgreSQL.
+# There is no database container here; ../.env must carry the managed DATABASE_URL.
+# Run from the repository root on the Linode:
+#   docker compose -f deploy/compose.yaml up -d --build
+# DOMAIN comes from deploy/.env, written by deploy_linode.sh.
+services:
+  init:
+    build: ..
+    env_file: ../.env
+    command: ["sh", "-c", "python -m backend.scripts.init_db && python -m backend.scripts.seed"]
+
+  app:
+    build: ..
+    env_file: ../.env
+    restart: unless-stopped
+    # Not published: Caddy is the only public entry (spec 12.3).
+    expose:
+      - "8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=4)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy-data:
+  caddy-config:
