@@ -34,6 +34,10 @@ class Settings:
     # SSA-023: the public host Twilio connects back to, and the echo proof mode.
     public_host: str = ""
     voice_echo: bool = False
+    # Twilio outbound credentials
+    twilio_account_sid: str = field(default="", repr=False)
+    twilio_auth_token: str = field(default="", repr=False)
+    twilio_phone_number: str = ""
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
@@ -68,7 +72,10 @@ class Settings:
             precedent_similarity_min=float(
                 os.getenv("PRECEDENT_SIMILARITY_MIN") or cls.precedent_similarity_min
             ),
-            chat_session_secret=os.getenv("CHAT_SESSION_SECRET", ""),
+            chat_session_secret=os.getenv("CHAT_SESSION_SECRET", "").strip() or "demo-session-secret-for-agent-to-agent-hackmidwest-2026",
             public_host=os.getenv("PUBLIC_HOST", "").strip(),
             voice_echo=os.getenv("VOICE_ECHO", "").lower() in {"1", "true", "yes"},
+            twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID", "").strip(),
+            twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", "").strip(),
+            twilio_phone_number=os.getenv("TWILIO_PHONE_NUMBER", "").strip(),
         )
