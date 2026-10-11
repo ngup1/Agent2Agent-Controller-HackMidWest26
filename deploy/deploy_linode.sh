@@ -223,7 +223,7 @@ apply() {
   curl -s "https://$domain/healthz"
   echo
   echo "Deployed after $(elapsed): https://$domain"
-  echo "Record these in the README resource inventory:"
+  echo "Record these in the resource inventory in docs/engineering-notes.md:"
   echo "  database $DB_LABEL id $db_id | firewall $FIREWALL_LABEL id $fw_id | Linode $LINODE_LABEL id $linode_id ($ip, $db_region)"
   echo "SSH in with: ssh -i $SSH_KEY root@$ip"
 }
