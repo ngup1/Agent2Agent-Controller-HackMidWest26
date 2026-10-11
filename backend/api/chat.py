@@ -50,8 +50,10 @@ def create_chat_router(*, service: Any, repository: Any, business_id: UUID, secr
         if request.interaction_id is None:
             try:
                 interaction_id = UUID(str(repository.create_interaction(business_id, channel="api")))
-            except Exception:
-                raise HTTPException(503, "Chat is temporarily unavailable") from None
+            except Exception as exc:
+                import logging
+                logging.getLogger("uvicorn.error").error("create_interaction failed: %s: %s", type(exc).__name__, exc)
+                raise HTTPException(503, f"Database/interaction error: {exc}") from None
         else:
             interaction_id = request.interaction_id
             if not hmac.compare_digest(request.conversation_token or "", token_for(interaction_id)):

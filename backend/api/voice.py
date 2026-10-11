@@ -57,6 +57,23 @@ def _run_turn(service: Any, interaction_id: Any, text: str) -> str:
 router = APIRouter()
 
 
+def approval_twiml(name: str = "Seyun", service: str = "haircut") -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response><Pause length=\"1\"/>"
+        "<Say voice=\"Polly.Joanna\">"
+        f"Hello {name}. This is the automated assistant from the salon. "
+        f"Our staff has reviewed and approved your {service} appointment. "
+        "Your booking is confirmed. We look forward to seeing you."
+        "</Say></Response>"
+    )
+
+
+@router.api_route("/voice/approval", methods=["GET", "POST"])
+def approval_endpoint(name: str = "Seyun", service: str = "haircut"):
+    return Response(content=approval_twiml(name, service), media_type="text/xml")
+
+
 @router.post("/voice/incoming")
 def incoming(request: Request):
     """Twilio's "a call comes in" webhook. The host is server configuration."""
