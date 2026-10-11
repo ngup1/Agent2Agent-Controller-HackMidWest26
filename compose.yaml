@@ -24,6 +24,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CHAT_MODEL: ${CHAT_MODEL:-hackathon-chat}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-hackathon-embedding}
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-}
+      JEV_MODE: ${JEV_MODE:-}
+      PRECEDENT_SIMILARITY_MIN: ${PRECEDENT_SIMILARITY_MIN:-0.80}
     command: ["sh", "-c", "python -m backend.scripts.init_db && python -m backend.scripts.seed"]
     depends_on:
       db:
