@@ -81,9 +81,13 @@ def test_three_jev_answers_are_persisted_rendered_and_control_booking(salon, dat
         assert reason["evidence"]["model"] == "jev-test"
         if reason["code"] != "JEV_UNAVAILABLE":
             assert reason["evidence"]["probabilities"] == sdk.answers[key].probabilities
+        else:
+            assert reason["evidence"]["verdict"] == "UNAVAILABLE"
+            assert reason["evidence"]["confidence"] is None
     assert database.conn.execute("SELECT count(*) FROM bookings WHERE action_id=%s", (action,)).fetchone()[0] == int(question_id is None)
     page = client.get(f"/dashboard/cases/{action}", auth=AUTH).text
     assert expected_code in page and "jev-test" in page and "Jev: Live" in page
+    assert page.count("<dt>Verdict</dt><dd>UNAVAILABLE</dd>") == int(expected_code == "JEV_UNAVAILABLE")
     for question in QUESTIONS.values():
         assert f'<h3>{question["label"]}</h3>' in page
     assert "Answer probabilities" in page and "synthetic-test-key" not in page
@@ -127,4 +131,5 @@ def test_missing_key_is_visible_on_case_and_creates_no_booking(database):
     action = database.conn.execute("SELECT id FROM agent_actions WHERE interaction_id=%s", (session["interaction_id"],)).fetchone()[0]
     page = client.get(f"/dashboard/cases/{action}", auth=AUTH).text
     assert "JEV_UNAVAILABLE" in page and "TYPESAFE_API_KEY is not set" in page
+    assert page.count("<dt>Verdict</dt><dd>UNAVAILABLE</dd>") == 3
     assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0

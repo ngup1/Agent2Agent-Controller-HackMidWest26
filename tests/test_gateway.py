@@ -128,6 +128,11 @@ def test_provider_failure_or_malformed_result_escalates_as_unknown(retrieve, ass
     decision = decide(retrieve=retrieve, assess=assess)
     assert (decision.decision, decision.risk_level) == ("escalate", "unknown")
     assert code in codes(decision)
+    if code == "JEV_UNAVAILABLE":
+        evidence = next(item["evidence"] for item in decision.reasons if item["code"] == code)
+        assert evidence["verdict"] == "UNAVAILABLE"
+        assert evidence["confidence"] is None
+        assert "probabilities" not in evidence
 
 
 def test_unset_provider_modes_escalate_instead_of_using_a_fake():
@@ -161,7 +166,10 @@ def test_any_jev_concern_insufficient_context_or_low_confidence_escalates(questi
     }
 
 
-@pytest.mark.parametrize("replacement", [None, {}, {"verdict": "NO_CONCERN", "confidence": 1.0}])
+@pytest.mark.parametrize("replacement", [
+    None, {}, {"verdict": "NO_CONCERN", "confidence": 1.0},
+    {"verdict": "UNAVAILABLE", "confidence": None, "error": "Synthetic timeout"},
+])
 def test_incomplete_required_check_cannot_allow_and_preserves_other_evidence(replacement):
     result = fake_assess(None, None, None, None)
     if replacement is None:
@@ -171,6 +179,11 @@ def test_incomplete_required_check_cannot_allow_and_preserves_other_evidence(rep
     decision = decide(assess=lambda *args: result)
     assert (decision.decision, decision.risk_level) == ("escalate", "unknown")
     assert codes(decision) == ["JEV_NO_CONCERN", "JEV_NO_CONCERN", "JEV_UNAVAILABLE"]
+    evidence = decision.reasons[-1]["evidence"]
+    assert evidence["verdict"] == "UNAVAILABLE"
+    assert evidence["confidence"] is None
+    assert "probabilities" not in evidence
+    assert evidence["error"] == ((replacement or {}).get("error") or "Missing or malformed Jev answer")
 
 
 def test_three_checks_at_confidence_threshold_allow_and_use_speaker_labelled_context():

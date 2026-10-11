@@ -110,7 +110,8 @@ def _jev_reasons(assess, mode, proposal, excerpt, checks, precedents) -> list[di
         if not valid_answer(answer):
             error = answer.get("error") if isinstance(answer, dict) and answer.get("verdict") == "UNAVAILABLE" else None
             reasons.append(reason("JEV_UNAVAILABLE", "jev", "escalate", {
-                **evidence, "error": error or "Missing or malformed Jev answer",
+                **evidence, "verdict": "UNAVAILABLE", "confidence": None,
+                "error": error or "Missing or malformed Jev answer",
             }))
             continue
         evidence.update({name: answer[name] for name in ("verdict", "confidence", "probabilities")})
@@ -221,7 +222,8 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         # The adapter reports an error type or a fixed phrase, never provider text.
         error = str(exc) if isinstance(exc, ProviderUnavailable) else type(exc).__name__
         reasons.append(reason("JEV_UNAVAILABLE", "jev", "escalate",
-                              {"mode": snapshot["providers"]["jev"], "error": error}))
+                              {"mode": snapshot["providers"]["jev"], "verdict": "UNAVAILABLE",
+                               "confidence": None, "error": error}))
 
     escalates = any(item["effect"] == "escalate" for item in reasons)
     decision = "escalate" if escalates else "allow"

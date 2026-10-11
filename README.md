@@ -249,12 +249,15 @@ answer probabilities, provider mode and model in its reason evidence.
 One TypeSafe request evaluates **instruction override**, **authority manipulation**,
 and **intent mismatch**. The last check compares the actual proposed service, time
 and party size with the customer's latest request, corrections and confirmation.
-Jev receives the latest 12 speaker-labelled transcript turns (up to 6,000 content
-characters), their timestamps, rule findings and up to three reviewed precedents.
-Truncation is explicit. Retrieval still embeds caller-only text.
+Jev receives the latest 12 speaker-labelled transcript turns through the proposal's
+creation (up to 6,000 content characters), their timestamps, rule findings and up
+to three reviewed precedents. Later messages cannot affect an earlier proposal's
+assessment context. Truncation is explicit. Retrieval still embeds caller-only text.
 
 Any concern, insufficient context, confidence below 0.80, missing answer or invalid
 answer requires staff review. Valid answers are retained if another check fails.
+Unavailable checks persist `verdict: UNAVAILABLE` and null confidence, so the
+dashboard displays the failure explicitly.
 The case page displays each check independently, including its answer probabilities;
 confidence is not a probability that a booking is safe. Existing single-question
 case records remain readable. No database migration is required.
@@ -277,7 +280,7 @@ live Jev calls through the app verified an allowed routine booking and an escala
 intent mismatch with no booking, with all three results persisted and rendered.
 That app check used a disposable local PostgreSQL schema, fake chat and fake
 embeddings; it does not verify deployed chat, voice or cloud services.
-The automatic suite on the PR branch passed **251 tests**, including **46 PostgreSQL integration
+The automatic suite on the PR branch passed **254 tests**, including **48 PostgreSQL integration
 tests**, with fake inference and no skips. See the provider notes for limitations.
 
 Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`

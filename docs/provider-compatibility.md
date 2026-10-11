@@ -40,9 +40,10 @@ completeness and writes one reason per required check. Valid sibling answers are
 preserved on a partial failure. This changes the former single-answer contract;
 stored historical decisions are not rewritten.
 
-Input includes ordered caller/receptionist turns with timestamps, the current
-booking's service/time/party size, rule checks and precedents. Only the latest
-12 turns and 6,000 content characters are sent, with an explicit truncation flag.
+Input includes ordered caller/receptionist turns with timestamps through the
+proposal's creation, the current booking's service/time/party size, rule checks
+and precedents. Only the latest 12 turns and 6,000 content characters are sent,
+with an explicit truncation flag. Later messages are excluded from the assessment.
 Instructions distinguish untrusted dialogue and precedent from application rules,
 and tell Jev to account for customer corrections and the confirmation exchange.
 
@@ -65,9 +66,12 @@ Chat and embeddings in that check were explicitly fake. The temporary schema was
 removed by the test fixture; no deployed database or real business was changed.
 
 Automatic validation: `TEST_DATABASE_URL=postgresql://seb@127.0.0.1:55439/ssa_validation
-.venv/bin/python -m pytest -q -rs` passed 251 tests on the PR branch, including 46
+.venv/bin/python -m pytest -q -rs` passed 254 tests on the PR branch, including 48
 PostgreSQL integration tests, with no skips. SDK failures,
 malformed/partial answers, low confidence and insufficient context were exercised
-with fakes. Live failure behaviour and live `INSUFFICIENT_CONTEXT` remain unverified.
+with fakes. Regression tests cover delayed assessment after a later proposal,
+including writes in one transaction, and explicit `UNAVAILABLE` verdicts in
+persisted evidence and on the dashboard. Live failure behaviour and live
+`INSUFFICIENT_CONTEXT` remain unverified.
 These smoke cases do not measure classification accuracy or calibrate the 0.80
 review threshold. No cloud deployment was performed for this extension.
