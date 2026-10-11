@@ -1,9 +1,5 @@
 # Supervised Service Agent — Hack Midwest
 
-[SSA-001](https://github.com/ngup1/Agent2Agent-Controller-HackMidWest26/issues/2)
-establishes the FastAPI/PostgreSQL foundation for the demo in [spec.md](spec.md).
-The shared application package is `backend/`; see [the agent guide](docs/agent-guide.md).
-
 ## Deployed app
 
 The demo runs on an Akamai Linode with Akamai Managed PostgreSQL at
