@@ -124,6 +124,45 @@ Calendar columns are `services.code/name/duration_minutes/price_usd/active`,
 business IDs. `bookings.action_id` is unique. Capacity enforcement and execution
 belong to SSA-005; the table alone does not enforce workflow authorization.
 
+## Gate (SSA-010)
+
+`backend.services.gateway.evaluate(action_id)` decides one `proposed` booking and
+returns a `GateDecision` (`decision`, `risk_level`, `reasons`, `policy_snapshot`,
+plus `to_dict()`) in the spec's Demo scope shape. It books nothing. In one
+transaction it writes one `security_decisions` row and moves the action:
+
+| Decision | Action state | Also written |
+|---|---|---|
+| `allow` | `allowed` | — |
+| `escalate` | `pending_review` | a `pending` `human_reviews` row; `interactions.status = 'escalated'` |
+| `clarify` | `rejected` | — |
+
+Calling it again for a decided action returns the stored decision and writes nothing.
+
+Order: rules (`backend/policy/booking_rules.py`), then precedent, then Jev. A
+`clarify` stops after the rules and calls no provider. Notice under 30 minutes is
+`clarify` with `SLOT_UNAVAILABLE`; 30–119 minutes is `escalate` with `SHORT_NOTICE`.
+A party below one reuses `PARTY_TOO_LARGE`, because the contract has no other code.
+A start time without an offset is read as business-local time.
+
+Besides `rules` and `checks`, `policy_snapshot` holds `precedents` (up to three,
+nearest first, approved or denied), `providers` (the mode each provider ran in) and
+`thresholds`. Jev's verdict, confidence, question and mode are in its reason's evidence.
+
+`RETRIEVAL_MODE` and `JEV_MODE` select `fake`, `live`, or unset:
+
+- `fake`: gate stand-ins. Retrieval returns no precedents and Jev returns no
+  concern. Both are recorded as `fake`. `.env.example` uses this for local work.
+- `live`: **not integrated yet.** `live_retrieve` and `live_assess` in
+  `gateway.py` raise until SSA-008 and SSA-009 replace their bodies, so every
+  bookable request escalates.
+- unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
+
+Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
+returns `[{interaction_id, summary, outcome, similarity}]`, and
+`assess(action, transcript_excerpt, rule_checks, precedents)` returns
+`{verdict, confidence, question}`.
+
 ## Managed database and integration status
 
 The [Akamai memory lab](https://github.com/akamai-developers/akamai-workshop-hackmidwest/blob/e362ae2/docs/02_memory.md)
@@ -149,7 +188,8 @@ substitute a fake client.
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Jev, receptionist, voice, gate, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
+| Gate (SSA-010) | Rules and persistence real; retrieval and Jev are labelled fakes, live modes unfinished |
+| Jev, receptionist, voice, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;

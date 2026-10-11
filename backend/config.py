@@ -19,10 +19,16 @@ class Settings:
     openai_api_key: str = field(default="", repr=False)
     chat_model: str = "hackathon-chat"
     embedding_model: str = "hackathon-embedding"
+    # Gate providers: "fake", "live", or "" (unset, which the gate escalates).
+    retrieval_mode: str = ""
+    jev_mode: str = ""
+    precedent_similarity_min: float = 0.80
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+        if {self.retrieval_mode, self.jev_mode} - {"", "fake", "live"}:
+            raise ValueError("RETRIEVAL_MODE and JEV_MODE must be fake, live or unset")
 
     @classmethod
     def from_env(cls):
@@ -34,4 +40,9 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
+            retrieval_mode=os.getenv("RETRIEVAL_MODE", "").strip().lower(),
+            jev_mode=os.getenv("JEV_MODE", "").strip().lower(),
+            precedent_similarity_min=float(
+                os.getenv("PRECEDENT_SIMILARITY_MIN") or cls.precedent_similarity_min
+            ),
         )
