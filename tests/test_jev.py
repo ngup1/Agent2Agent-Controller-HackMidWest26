@@ -6,7 +6,7 @@ import pytest
 
 from backend.config import Settings
 from backend.providers import jev
-from backend.services.gateway import evaluate
+from backend.services.gateway import evaluate, fake_retrieve
 from tests.test_gateway import NOW, FakeStore, proposal
 
 SETTINGS = Settings(retrieval_mode="fake", jev_mode="live", typesafe_api_key="synthetic-key")
@@ -84,6 +84,7 @@ def test_missing_key_is_unavailable_without_a_request():
 ])
 def test_gate_in_live_mode_uses_the_adapter_and_escalates_when_it_is_unavailable(monkeypatch, client, decision, evidence):
     monkeypatch.setattr(jev, "_client", lambda settings: client)
-    result = evaluate("action", now=NOW, store=FakeStore(proposal()), settings=SETTINGS)
+    result = evaluate("action", now=NOW, store=FakeStore(proposal()), settings=SETTINGS,
+                      retrieve=fake_retrieve)
     assert (result.decision, result.reasons[-1]["evidence"]) == (decision, evidence)
     assert result.policy_snapshot["providers"]["jev"] == "live"

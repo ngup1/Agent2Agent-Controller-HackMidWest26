@@ -6,6 +6,7 @@ action to `allowed`, `pending_review` or `rejected`; execution is SSA-005.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
 from functools import partial
 from uuid import UUID
 
@@ -28,7 +29,7 @@ class ProviderUnavailable(Exception):
 
 
 def fake_retrieve(business_id, text, exclude_interaction_id):
-    """Stand-in for SSA-008: no precedents. Recorded as mode `fake`."""
+    """Explicit empty retriever for isolated tests; app fake mode uses pgvector."""
     return []
 
 
@@ -41,9 +42,19 @@ def fake_assess(action, transcript_excerpt, rule_checks, precedents):
     }
 
 
-def live_retrieve(business_id, text, exclude_interaction_id):
-    # SSA-008 replaces this body with its retrieve_precedents call.
-    raise ProviderUnavailable("Precedent retrieval (SSA-008) is not integrated yet")
+def live_retrieve(business_id, text, exclude_interaction_id, *, action_id=None,
+                  settings=None, connection_factory=None):
+    """Retrieve reviewed calls using the configured embedding mode, never a fallback."""
+    from backend.database.repository import TranscriptRepository, _connect
+    from backend.memory.precedents import PrecedentService
+    settings = settings or Settings.from_env()
+    if business_id != settings.business_id or action_id is None:
+        raise ProviderUnavailable("Retrieval requires a persisted action for the configured business")
+    repo = TranscriptRepository(connection_factory or partial(_connect, settings))
+    # RETRIEVAL_MODE selects the embedding provider for gate calls. SQL retrieval
+    # is real in both modes; fake vectors are stored with a distinct model tag.
+    service = PrecedentService(repo, replace(settings, embedding_mode=settings.retrieval_mode))
+    return service.retrieve_for_action(action_id)
 
 
 def live_assess(action, transcript_excerpt, rule_checks, precedents, settings=None):
@@ -57,7 +68,6 @@ def _unconfigured(name):
     return call
 
 
-RETRIEVERS = {"fake": fake_retrieve, "live": live_retrieve, "": _unconfigured("RETRIEVAL_MODE")}
 ASSESSORS = {"fake": fake_assess, "live": live_assess, "": _unconfigured("JEV_MODE")}
 
 
@@ -121,7 +131,9 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
     RETRIEVAL_MODE and JEV_MODE; tests and other lanes may pass their own.
     """
     settings = settings or Settings.from_env()
-    store = store or GateStore()
+    if store is None:
+        from backend.database.repository import _connect
+        store = GateStore(partial(_connect, settings))
     now = now or datetime.now(timezone.utc)
     business_id = settings.business_id
 
@@ -151,7 +163,10 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         "retrieval": "injected" if retrieve else settings.retrieval_mode or "unset",
         "jev": "injected" if assess else settings.jev_mode or "unset",
     }
-    retrieve = retrieve or RETRIEVERS[settings.retrieval_mode]
+    if retrieve is None and settings.retrieval_mode in {"live", "fake"}:
+        retrieve = partial(live_retrieve, action_id=action_id, settings=settings,
+                           connection_factory=getattr(store, "connection_factory", None))
+    retrieve = retrieve or _unconfigured("RETRIEVAL_MODE")
     if assess is None and settings.jev_mode == "live":
         assess = partial(live_assess, settings=settings)
     assess = assess or ASSESSORS[settings.jev_mode]

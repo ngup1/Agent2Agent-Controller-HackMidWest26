@@ -174,7 +174,9 @@ never a caller-supplied business ID. The seed uses the same setting.
 Save text before calling the embedding provider so a provider failure cannot erase
 the transcript. Attachment returns `True` for a new embedding, `False` if already
 attached; it preserves the first vector/model. Vectors have 1,024 dimensions.
-`search_similar` still searches raw transcripts; reviewed precedent retrieval is SSA-008.
+`search_similar` searches raw transcripts. SSA-008 uses `PrecedentService` and
+`search_precedents` to retrieve only staff-decided calls; see
+[retrieval and replay](docs/ssa-008-precedents.md).
 
 An action starts as `proposed` with a generated `idempotency_key`. Recording a
 decision stores gate evidence without changing state or executing anything.
@@ -223,14 +225,22 @@ nearest first, approved or denied), `providers` (the mode each provider ran in) 
 
 `RETRIEVAL_MODE` and `JEV_MODE` select `fake`, `live`, or unset:
 
-- `fake`: gate stand-ins. Retrieval returns no precedents and Jev returns no
-  concern. Both are recorded as `fake`. `.env.example` uses this for local work.
+- `RETRIEVAL_MODE=fake`: real PostgreSQL/pgvector retrieval with deterministic
+  fake embeddings. Staff-decided calls are eligible immediately. Vectors and
+  evidence are labelled fake; this does not demonstrate semantic quality.
+- `JEV_MODE=fake`: the explicit Jev stand-in returns no concern.
+  `.env.example` selects both fake modes for local work.
 - `JEV_MODE=live`: a real Jev decision through the TypeSafe SDK
   (`backend/providers/jev.py`). It needs `TYPESAFE_API_KEY`; without the key, or on
   a timeout, SDK error or unexpected answer, the gate escalates with
   `JEV_UNAVAILABLE`. See [provider notes](docs/provider-compatibility.md).
-- `RETRIEVAL_MODE=live`: **not integrated yet.** `live_retrieve` in `gateway.py`
-  raises until SSA-008 replaces its body, so every bookable request escalates.
+- `RETRIEVAL_MODE=live`: workshop embeddings and real pgvector retrieval through
+  `PrecedentService.retrieve_for_action(action_id)`. Missing access, invalid
+  vectors or retrieval errors escalate with `RETRIEVAL_UNAVAILABLE`. No fake
+  provider is substituted.
+- `EMBEDDING_MODE` selects embeddings for standalone service users only; the
+  gate always uses `RETRIEVAL_MODE`. Fake/live vectors have different model tags.
+  Use separate demo datasets when switching modes; cached vectors are not replaced.
 - unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
 
 Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
@@ -264,7 +274,8 @@ substitute a fake client.
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database and Linode deployment (SSA-021) | Deployed 2026-10-10 at `https://172-232-10-159.sslip.io`; HTTPS health, managed database and booking-after-restart verified; Twilio check pending. See the section below |
-| Gate (SSA-010) | Rules and persistence real; fake provider modes are labelled; live retrieval unfinished |
+| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; live retrieval rehearsal pending |
+| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; recordings/calibration pending |
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
 | Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
