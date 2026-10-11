@@ -104,6 +104,7 @@ def test_denial_becomes_gate_jev_and_dashboard_evidence_for_later_call(database,
         assert seen[-1] == row[2]["precedents"]
         assert seen[-1][0]["interaction_id"] == denied_id
         assert seen[-1][0]["similarity"] == pytest.approx(1.0)
+        assert row[2]["providers"] == {"retrieval": "fake", "embeddings": "fake", "jev": "fake"}
         page = client.get(f"/dashboard/cases/{row[0]}")
         assert "SIMILAR_TO_DENIED" in page.text and denied_id in page.text
         assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
@@ -124,6 +125,7 @@ def test_retrieval_failure_reaches_staff_without_booking(database, monkeypatch, 
     assert row[0] == "unknown"
     assert "RETRIEVAL_UNAVAILABLE" in {r["code"] for r in row[1]}
     assert row[2]["providers"]["retrieval"] == settings.retrieval_mode
+    assert row[2]["providers"]["embeddings"] == settings.retrieval_mode
     assert database.conn.execute("SELECT count(*) FROM bookings").fetchone()[0] == 0
     if failure == "embedding":
         assert database.conn.execute("SELECT count(*) FROM transcript_embeddings").fetchone()[0] == 0

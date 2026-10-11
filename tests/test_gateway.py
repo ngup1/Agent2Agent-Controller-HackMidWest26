@@ -74,7 +74,11 @@ def test_routine_request_is_allowed_and_fakes_are_labelled():
     assert (decision.decision, decision.risk_level) == ("allow", "low")
     assert codes(decision) == ["JEV_NO_CONCERN"]
     assert decision.reasons[0]["evidence"]["mode"] == "fake"
-    assert decision.policy_snapshot["providers"] == {"retrieval": "fake", "jev": "fake"}
+    assert decision.policy_snapshot["providers"] == {
+        "retrieval": "fake",
+        "jev": "fake",
+        "embeddings": "fake"
+    }
     assert decision.policy_snapshot["rules"] == {
         "max_party_size_auto": 1, "max_party_size_hard": 3,
         "min_notice_minutes_auto": 120, "min_notice_minutes_hard": 30,

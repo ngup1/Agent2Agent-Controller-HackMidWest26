@@ -53,6 +53,8 @@ def case_view(case):
             "Not checked" if skipped and name not in providers else
             {"fake": "Fake", "live": "Live", "unset": "Unset"}.get(mode, "Not recorded")
         )
+    if providers.get("retrieval") == "live" and providers.get("embeddings") == "fake":
+        result["providers"]["retrieval"] = "Fake embeddings (pgvector)"
     result["checks"] = snapshot.get("checks") or []
     result["precedents"] = snapshot.get("precedents") or []
     result["providers_skipped"] = skipped

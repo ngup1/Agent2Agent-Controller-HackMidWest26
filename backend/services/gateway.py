@@ -53,7 +53,10 @@ def live_retrieve(business_id, text, exclude_interaction_id, *, action_id=None,
     repo = TranscriptRepository(connection_factory or partial(_connect, settings))
     # RETRIEVAL_MODE selects the embedding provider for gate calls. SQL retrieval
     # is real in both modes; fake vectors are stored with a distinct model tag.
-    service = PrecedentService(repo, replace(settings, embedding_mode=settings.retrieval_mode))
+    service = PrecedentService(
+        repo,
+        replace(settings, embedding_mode=settings.retrieval_mode),
+    )
     return service.retrieve_for_action(action_id)
 
 
@@ -163,9 +166,18 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         "retrieval": "injected" if retrieve else settings.retrieval_mode or "unset",
         "jev": "injected" if assess else settings.jev_mode or "unset",
     }
+
+    # Match the provider actually selected by live_retrieve. EMBEDDING_MODE
+    # configures standalone retrieval and must not downgrade a live gate.
     if retrieve is None and settings.retrieval_mode in {"live", "fake"}:
-        retrieve = partial(live_retrieve, action_id=action_id, settings=settings,
-                           connection_factory=getattr(store, "connection_factory", None))
+        snapshot["providers"]["embeddings"] = settings.retrieval_mode
+        retrieve = partial(
+            live_retrieve,
+            action_id=action_id,
+            settings=settings,
+            connection_factory=getattr(store, "connection_factory", None),
+        )
+
     retrieve = retrieve or _unconfigured("RETRIEVAL_MODE")
     if assess is None and settings.jev_mode == "live":
         assess = partial(live_assess, settings=settings)
