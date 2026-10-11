@@ -22,7 +22,84 @@ Deployment details, resource IDs and verification results are under
 The host was moved to the banh mi order build on 2026-10-11 (`apply`, then
 `seed --reset`, run by the owner). It does not yet have the later prompt fix that
 stops the receptionist asking for a phone number; see
-[Banh mi orders (SSA-031)](#banh-mi-orders-ssa-031).
+## Demo execution guide
+
+The system connects three interactive channels to a unified Supervisor Gate, Policy Engine, and Staff Dashboard:
+
+```mermaid
+flowchart LR
+    A["🤖 1. Agent-to-Agent\n(Autonomous /chat)"] --> G["🛡️ Supervisor Gate\n(Policy & Limit Checks)"]
+    B["📞 2. Inbound Voice\n(+1 229-490-2249)"] --> G
+    G --> D["🖥️ 3. Staff Dashboard\n(/dashboard)"]
+    D --> O["📱 4. Outbound Voice\n(Twilio Callback)"]
+```
+
+### 1. Agent-to-Agent autonomous session
+
+Simulates customer AI assistant (Agent A) negotiating an order directly with the restaurant receptionist AI (Agent B) over `POST /chat`, with spoken voice audio synthesis (`--voice`):
+
+```bash
+# Terminal 1: Keep server running locally (or use the deployed host)
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+
+# Terminal 2: Run Agent-to-Agent autonomous booking session
+python -m backend.scripts.agent2agent --scenario pork --phone +13145850116 --voice
+```
+
+To run against the live cloud deployment instead of localhost, pass `--url`:
+```bash
+python -m backend.scripts.agent2agent --url https://172-232-10-159.sslip.io --scenario pork --phone +13145850116 --voice
+```
+
+**Supported Scenarios:**
+- `--scenario pork` *(Default)*: 1 Grilled pork banh mi ($8.50).
+- `--scenario large`: 2 Party trays ($120.00 > $100 limit → triggers `ORDER_OVER_LIMIT` escalation).
+- `--scenario allergy`: Tofu banh mi with peanut allergy mention (→ triggers `KEYWORD_RULE` allergen escalation).
+- `--scenario manipulation`: Adversarial prompt injection attempt (→ blocked by Gate).
+
+**Outcome:**
+The request escalates to human review, and appears instantly on the staff dashboard under **Needs action**.
+
+---
+
+### 2. Inbound voice calls (Twilio Voice)
+
+Customers can dial in from any mobile phone directly:
+
+- **Live Twilio Phone Number:** `+1 (229) 490-2249`
+- **Connected Host:** `https://172-232-10-159.sslip.io/voice/incoming`
+
+**How it works:**
+1. Call `+1 (229) 490-2249` from your cell phone.
+2. The AI receptionist answers live: *"Hello, thanks for calling Banh Mi Shop. What can I get for you?"*
+3. Speak your order: *"I'd like to order one grilled pork banh mi, the name is Seyun."*
+4. Receptionist recaps: *"1 Grilled pork banh mi, $8.50 total, under Seyun. Is that correct?"*
+5. Confirm: *"Yes, that's correct."*
+6. Receptionist responds: *"I've passed this to our staff. Someone will call you back shortly to confirm. Your order is not placed yet."*
+7. The call ends, and the order card appears live on the Staff Dashboard with the caller's phone number.
+
+*For local inbound testing through ngrok:*
+```bash
+ngrok http 8000
+# In .env set PUBLIC_HOST=<ngrok-subdomain>.ngrok-free.app
+# Update Twilio phone number voice_url to https://<ngrok-subdomain>.ngrok-free.app/voice/incoming
+```
+
+---
+
+### 3. Staff review & outbound voice callback
+
+1. Open the Staff Dashboard: `http://localhost:8000/dashboard` (or `https://172-232-10-159.sslip.io/dashboard`). Username: `staff`, Password: configured `DASHBOARD_PASSWORD`.
+2. Locate the escalated card under the **Needs action** column.
+3. Click the card to review transcript evidence, policies, and supervisor reasoning.
+4. Click **Approve**.
+5. The order connector executes the write to PostgreSQL, and Twilio Voice automatically dials the customer's phone number with a spoken confirmation:
+   > *"Hello Seyun! This is the automated assistant from Demo Banh Mi. Our staff has reviewed and approved your order for grilled pork banh mi. Your order is now confirmed and being prepared. Thank you for ordering with us!"*
+
+To test the outbound call directly from the command line:
+```bash
+python -m backend.services.outbound +13145850116 --name Seyun --service "grilled pork banh mi"
+```
 
 ## Banh mi orders (SSA-031)
 
