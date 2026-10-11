@@ -153,9 +153,12 @@ nearest first, approved or denied), `providers` (the mode each provider ran in) 
 
 - `fake`: gate stand-ins. Retrieval returns no precedents and Jev returns no
   concern. Both are recorded as `fake`. `.env.example` uses this for local work.
-- `live`: **not integrated yet.** `live_retrieve` and `live_assess` in
-  `gateway.py` raise until SSA-008 and SSA-009 replace their bodies, so every
-  bookable request escalates.
+- `JEV_MODE=live`: a real Jev decision through the TypeSafe SDK
+  (`backend/providers/jev.py`). It needs `TYPESAFE_API_KEY`; without the key, or on
+  a timeout, SDK error or unexpected answer, the gate escalates with
+  `JEV_UNAVAILABLE`. See [provider notes](docs/provider-compatibility.md).
+- `RETRIEVAL_MODE=live`: **not integrated yet.** `live_retrieve` in `gateway.py`
+  raises until SSA-008 replaces its body, so every bookable request escalates.
 - unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
 
 Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
@@ -188,8 +191,9 @@ substitute a fake client.
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Gate (SSA-010) | Rules and persistence real; retrieval and Jev are labelled fakes, live modes unfinished |
-| Jev, receptionist, voice, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
+| Gate (SSA-010) | Rules and persistence real; fake provider modes are labelled; live retrieval unfinished |
+| Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
+| Receptionist, voice, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;
