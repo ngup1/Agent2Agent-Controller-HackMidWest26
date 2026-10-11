@@ -25,6 +25,9 @@ class Settings:
     retrieval_mode: str = ""
     jev_mode: str = ""
     precedent_similarity_min: float = 0.80
+    typesafe_api_key: str = field(default="", repr=False)
+    typesafe_model: str = ""  # empty uses the SDK default
+    chat_session_secret: str = field(default="", repr=False)
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
@@ -46,7 +49,10 @@ class Settings:
             dashboard_preview=os.getenv("DASHBOARD_PREVIEW", "").lower() in {"1", "true", "yes"},
             retrieval_mode=os.getenv("RETRIEVAL_MODE", "").strip().lower(),
             jev_mode=os.getenv("JEV_MODE", "").strip().lower(),
+            typesafe_api_key=os.getenv("TYPESAFE_API_KEY", "").strip(),
+            typesafe_model=os.getenv("TYPESAFE_MODEL", "").strip(),
             precedent_similarity_min=float(
                 os.getenv("PRECEDENT_SIMILARITY_MIN") or cls.precedent_similarity_min
             ),
+            chat_session_secret=os.getenv("CHAT_SESSION_SECRET", ""),
         )

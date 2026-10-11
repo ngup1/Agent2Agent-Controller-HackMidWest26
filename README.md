@@ -225,9 +225,12 @@ nearest first, approved or denied), `providers` (the mode each provider ran in) 
 
 - `fake`: gate stand-ins. Retrieval returns no precedents and Jev returns no
   concern. Both are recorded as `fake`. `.env.example` uses this for local work.
-- `live`: **not integrated yet.** `live_retrieve` and `live_assess` in
-  `gateway.py` raise until SSA-008 and SSA-009 replace their bodies, so every
-  bookable request escalates.
+- `JEV_MODE=live`: a real Jev decision through the TypeSafe SDK
+  (`backend/providers/jev.py`). It needs `TYPESAFE_API_KEY`; without the key, or on
+  a timeout, SDK error or unexpected answer, the gate escalates with
+  `JEV_UNAVAILABLE`. See [provider notes](docs/provider-compatibility.md).
+- `RETRIEVAL_MODE=live`: **not integrated yet.** `live_retrieve` in `gateway.py`
+  raises until SSA-008 replaces its body, so every bookable request escalates.
 - unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
 
 Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
@@ -261,8 +264,39 @@ substitute a fake client.
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Gate (SSA-010) | Rules and persistence real; retrieval and Jev are labelled fakes, live modes unfinished |
-| Jev, receptionist, voice, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
+| Gate (SSA-010) | Rules and persistence real; fake provider modes are labelled; live retrieval unfinished |
+| Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
+| Booking calendar (SSA-005) | Real persistence; see the section below |
+| Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
+| Dashboard (SSA-015) | See the SSA-015 section above |
+| Voice | Unfinished; assigned to the other demo issues |
+
+## Testing SSA-005: Booking Calendar & Execution Connector
+
+SSA-005 provides in-process booking calendar queries and atomic execution in `backend/connectors/booking.py`:
+- `list_slots(service, day)`: Queries open 30-minute slots and computes available remaining capacity (`capacity - booked`).
+- `execute(action_id)` (aliased as `book(action_id)`): Idempotently validates action state (`allowed` or `pending_review` with `approved`), row-locks slot capacity (`FOR UPDATE`), and writes the booking.
+
+### How to test:
+
+1. Ensure the PostgreSQL container is running:
+   ```bash
+   docker compose up -d db
+   # Note: If port 5432 is already occupied on your host, use DATABASE_PORT=5433 docker compose up -d db
+   ```
+
+2. Point to the test database and run integration tests:
+   ```bash
+   export TEST_DATABASE_URL="postgresql://demo:demo@localhost:5432/demo" # or port 5433
+   pytest tests/integration/test_booking.py -v
+   ```
+
+3. What the tests verify:
+   - **Idempotency:** Executing the same action twice yields exactly one booking row.
+   - **Capacity Guard:** Booking a full slot fails cleanly with state `failed` and reason `SLOT_FULL`.
+   - **State Gate:** Actions that are `proposed`, `rejected`, or awaiting review cannot be executed.
+   - **Durability:** Bookings persist in PostgreSQL across connections.
+
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;
@@ -270,3 +304,19 @@ a running Uvicorn server returned HTTP 200 with `database: reachable`.
 `docker compose config -q` passed. Compose startup remains unverified because this
 workspace cannot access the Docker daemon socket. Managed database and live
 inference calls were not run.
+
+## SSA-014 receptionist (in-progress)
+
+`POST /chat` and `handle_turn(interaction_id, text)` are now implemented. The route
+requires a server-owned `CHAT_SESSION_SECRET` (24+ characters) and live
+`OPENAI_API_KEY`; neither is committed. Run `python3 -m backend.scripts.init_db`
+to apply the new `005_ssa014.sql` pending-proposal table after SSA-001 migrations.
+A confirmed proposal now goes through the real gate (SSA-010) and, on `allow`,
+the booking calendar (SSA-005); tests may still inject their own. Set
+`RETRIEVAL_MODE` and `JEV_MODE`, or every bookable request goes to staff review.
+A spoken yes such as "yeah" or "yes, that's correct" confirms; a reply containing
+a change ("yes, but…") clears the proposal. The service the model sends is matched
+to a seeded service by code or display name and stored as its code. No live
+Akamai chat call has been verified yet.
+See [SSA-014 integration guide](docs/ssa-014-integration.md) for wiring, tests,
+and safe fallback behavior.

@@ -123,7 +123,9 @@ def test_unset_provider_modes_escalate_instead_of_using_a_fake():
     assert (decision.decision, decision.risk_level) == ("escalate", "unknown")
     assert codes(decision) == ["RETRIEVAL_UNAVAILABLE", "JEV_UNAVAILABLE"]
     assert decision.policy_snapshot["providers"] == {"retrieval": "unset", "jev": "unset"}
-    assert decide(settings=Settings(retrieval_mode="live", jev_mode="live")).decision == "escalate"
+    live = decide(settings=Settings(retrieval_mode="live", jev_mode="live"))  # no key, so no request
+    assert (live.decision, live.reasons[-1]["evidence"]) == (
+        "escalate", {"mode": "live", "error": "TYPESAFE_API_KEY is not set"})
 
 
 @pytest.mark.parametrize("verdict,confidence,code,risk", [
