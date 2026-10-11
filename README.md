@@ -273,14 +273,113 @@ substitute a fake client.
 | Mock calendar & execution connector (SSA-005) | Implemented (`backend/connectors/booking.py`); verified via 4 integration tests |
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
-| Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; live retrieval rehearsal pending |
-| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; recordings/calibration pending |
+| Managed database and Linode deployment (SSA-021) | Deployed 2026-10-10 at `https://172-232-10-159.sslip.io`; HTTPS health, managed database and booking-after-restart verified; Twilio check pending. See the section below |
+| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; one live retrieval rehearsal run on the deployed host (see SSA-021 section) |
+| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; live recall rehearsed once on the deployed host; recordings and threshold calibration pending |
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
 | Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
 | Dashboard (SSA-015) | See the SSA-015 section above |
 | Voice | Unfinished; assigned to the other demo issues |
+
+## Deploying on Akamai (SSA-021)
+
+`deploy/` holds the cloud stack: `compose.yaml` (app and Caddy, no database
+container), `Caddyfile`, `cloud-init.yaml` and `deploy_linode.sh`. The script is
+adapted from the workshop's `scripts/deploy_linode.sh` at revision `e362ae2`.
+Deliberate differences: Caddy serves HTTPS and WSS on 443 and port 8000 is not
+published, SSH is limited to named addresses, and the Linode is created in the
+database's region. The database is the team's existing `ssa-demo-pg`
+(`DB_LABEL` overrides the label); the script never creates or deletes a database.
+
+Needs `linode-cli` configured for the team account (`pip install linode-cli`,
+then `linode-cli configure`) and an SSH key (`ssh-keygen -t ed25519`).
+
+```bash
+bash deploy/deploy_linode.sh plan      # read-only: account, region, price, what apply would do
+bash deploy/deploy_linode.sh allow-me  # add this machine's /32 to the database allow list
+bash deploy/deploy_linode.sh env       # write the managed DATABASE_URL into .env.deploy
+bash deploy/deploy_linode.sh apply     # create firewall and Linode (billed), deploy, wait for HTTPS
+bash deploy/deploy_linode.sh status    # resource IDs and health
+```
+
+- `plan` changes nothing. A person reviews the account, region and price before
+  running `apply`, which creates a `g6-standard-1` Linode (`LINODE_TYPE` overrides).
+- `.env.deploy` is the server's `.env`. `env` creates it from `.env` and replaces
+  only `DATABASE_URL`; set the provider modes, API keys, `DASHBOARD_PASSWORD` and
+  `CHAT_SESSION_SECRET` there before `apply`. It is ignored by git and copied over SSH.
+- The host name defaults to `<linode-ip-with-dashes>.sslip.io`, so Caddy can get a
+  certificate without a DNS record. Set `DOMAIN=…` to use a real name that already
+  points at the Linode.
+- The firewall accepts 22 from `SSH_ALLOW` (default: the current machine's `/32`)
+  and 80/443 from anywhere. Running `apply` again from a new network updates the
+  SSH rule and redeploys the code.
+- The allow list gets `/32` entries only; the script refuses to work with a
+  database open to `0.0.0.0/0`.
+- Migrations and the seed run against the managed database on every `apply`.
+  Both are repeatable; `002_governance.sql` creates the `vector` extension.
+- The connection uses `sslmode=require` (encrypted, certificate not verified).
+  Certificate verification and a separate runtime role are deferred.
+
+After a successful `apply`, restart check: make a booking, run
+`ssh root@<ip> "cd /opt/ssa && docker compose -f deploy/compose.yaml restart app"`,
+and confirm the booking is still listed on the dashboard.
+
+### Resource inventory
+
+Fill in from the last lines of `apply` (or `status`). Delete these after the event;
+a powered-off Linode is still billed.
+
+| Resource | Label | ID | Region | Notes |
+|---|---|---|---|---|
+| Managed PostgreSQL | `ssa-demo-pg` | 537406 | `us-ord` | PostgreSQL 17, `g6-nanode-1`; created by the team outside this script |
+| Cloud Firewall | `ssa-demo-fw` | 201851353 | n/a | 22 from one dev `/32`; 80/443 public |
+| Linode | `ssa-demo-app` | 107879694 | `us-ord` | `g6-standard-1`, 172.232.10.159, `https://172-232-10-159.sslip.io` |
+
+### SSA-021 acceptance record
+
+| Check | Result |
+|---|---|
+| `/healthz` over HTTPS on the Linode reports the managed database reachable | Passed 2026-10-10: `{"status":"ok","database":"reachable"}` with a Let's Encrypt certificate; still healthy after `restart app` |
+| A booking survives an app container restart on the deployed host | Passed 2026-10-10: a haircut booked through `POST /chat` with live `hackathon-chat` (gate providers `fake`) was still in the managed database after `restart app` |
+| Twilio reaches `wss://…/voice/stream` | Not run yet; the voice route (SSA-023) is not on `main` |
+| No secrets committed; database not open to all addresses | Passed 2026-10-10: allow list is one dev `/32` and the Linode `/32`; port 8000 closed publicly; `.env.deploy` ignored by git |
+
+Checked locally only: the compose stack with a throwaway PostgreSQL container and
+`DOMAIN=localhost` answered `/healthz` through Caddy over HTTPS, redirected port 80,
+and stayed healthy after an app restart. The script's `plan`, `env`, `allow-me` and
+guard paths were run against a stubbed `linode-cli` before the first real `apply`.
+
+### Live rehearsal on the deployed host (2026-10-10)
+
+Run through `POST /chat` at `https://172-232-10-159.sslip.io` with live
+`hackathon-chat`, `RETRIEVAL_MODE=live` (live `hackathon-embedding`) and
+`JEV_MODE=fake`. One run, three calls; not a calibration.
+
+| Call | Outcome | Nearest precedent |
+|---|---|---|
+| Haircuts for three, Monday 2 pm | Escalated on `GROUP_SIZE`; denied on the dashboard | None (no decided calls yet) |
+| Haircuts for three, Monday 3 pm | Escalated, risk high, `SIMILAR_TO_DENIED` added | The first call, denied, similarity 0.96 |
+| Beard trim for one, Monday 11 am | Booked automatically | The first call, denied, similarity 0.78 (below 0.80, no flag) |
+
+What it showed:
+
+- Live recall works end to end: embed, store, pgvector search, gate reason and
+  evidence on the case.
+- `PRECEDENT_SIMILARITY_MIN=0.80` has little margin. An unrelated routine request
+  scored 0.78 against a denied group booking. One sample only; calibrate on more
+  calls before changing it.
+- Chat replies took 3.7 to 12.5 seconds, against a 12-second model timeout in
+  `backend/main.py`. One attempt at 12.5 seconds returned the "I couldn't
+  understand that request" fallback and succeeded when repeated.
+- A rejected or timed-out model call reaches the caller as that same fallback and
+  writes nothing to the logs, so an invalid API key looks like a misunderstanding.
+- The seed creates three days of slots from the day it runs; a request for the
+  fourth day was refused as unavailable. Each `apply` re-seeds.
+
+The managed database still holds this rehearsal's rows: two bookings (Test Caller,
+Rehearsal Charlie), one denied review (Rehearsal Alpha, which acts as a precedent
+for similar calls), one pending review (Rehearsal Bravo) and three embeddings.
 
 ## Testing SSA-005: Booking Calendar & Execution Connector
 
