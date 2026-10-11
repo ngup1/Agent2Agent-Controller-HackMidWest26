@@ -107,9 +107,9 @@ class OutboundService:
 <Response>
     <Pause length="1"/>
     <Say>
-        Hello {clean_name}! This is the automated assistant from the salon.
-        Our staff has reviewed and approved your {clean_service} appointment for {time_display}.
-        Your booking is now confirmed. We look forward to seeing you!
+        Hello {clean_name}! This is the automated assistant from Demo Banh Mi.
+        Our staff has reviewed and approved your order for {clean_service}.
+        Your order is now confirmed and being prepared. Thank you for ordering with us!
     </Say>
 </Response>"""
 

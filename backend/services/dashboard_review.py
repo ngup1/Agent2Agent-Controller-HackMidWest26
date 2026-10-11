@@ -77,13 +77,39 @@ class ReviewService:
                 except Exception:
                     payload = {}
             callback_number = payload.get("callback_number")
+            if not callback_number:
+                try:
+                    with self.connect() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "SELECT i.callback_number FROM interactions i "
+                                "JOIN agent_actions a ON a.interaction_id = i.id "
+                                "WHERE a.id = %s",
+                                (action_id,),
+                            )
+                            row = cur.fetchone()
+                            if row and row[0]:
+                                callback_number = row[0]
+                except Exception:
+                    pass
+
+            items = payload.get("items", [])
+            if isinstance(items, list) and items:
+                counts: dict[str, int] = {}
+                for item in items:
+                    name = str(item).replace("_", " ")
+                    counts[name] = counts.get(name, 0) + 1
+                service_desc = ", ".join(f"{cnt} {name}" if cnt > 1 else name for name, cnt in counts.items())
+            else:
+                service_desc = payload.get("service", "order")
+
             if callback_number and self.outbound:
                 try:
                     self.outbound.call_approved_customer(
                         to_number=callback_number,
                         customer_name=payload.get("customer_name", "Valued Customer"),
-                        service=payload.get("service", "appointment"),
-                        start_time=payload.get("start_time", "today"),
+                        service=service_desc,
+                        direct=True,
                     )
                 except Exception:
                     pass

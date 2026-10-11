@@ -136,6 +136,12 @@ class ConversationService:
         if self.repository.get_interaction(interaction_id) is None:
             raise ValueError("Unknown interaction")
         self.repository.save_transcript_segment(interaction_id, "caller", text)
+        phone_match = re.search(r"(\+1\d{10})", text)
+        if phone_match:
+            try:
+                self.repository.set_callback_number(interaction_id, phone_match.group(1))
+            except Exception:
+                pass
         pending = self.repository.get_pending_proposal(interaction_id)
 
         if pending is not None:
