@@ -53,8 +53,8 @@ What is verified, and how:
 | Automated tests | 247 pass without a database; 300 pass with `TEST_DATABASE_URL` on local PostgreSQL 17 with pgvector (isolated schemas). Inference is fake in every test |
 | Local rehearsal through `POST /chat`, 2026-10-11 | Live `hackathon-chat`, live `hackathon-embedding` retrieval, `JEV_MODE=fake`, local PostgreSQL. One run of each call below; not a calibration |
 | Deployed host, managed database, 2026-10-11 | Through `POST /chat` with live `hackathon-chat`, live retrieval, `JEV_MODE=fake`: a routine order was placed at $13.00 and an allergy mention went to staff with no order. The two-party-tray call did **not** reach the gate in two attempts, because the model asked for a callback number instead of proposing. The prompt was then changed; the changed prompt returned the correct proposal three times out of three when called directly against the live model, but it has **not** been redeployed or re-run on the host |
-| Phone call through Twilio | **Not run** with orders. No real call has reached the application yet (SSA-023) |
-| Live Jev with orders | **Not run.** The reworded third question is tested with a fake client only |
+| Phone call through Twilio, deployed host, 2026-10-11 | One real call placed a routine order by voice (1 party tray, $60.00), with live `hackathon-chat` and `JEV_MODE=fake`. A team member made the call; the order and the caller's number then appeared on the dashboard. A flagged call by phone has **not** been run. Twilio webhook signatures are **not** validated (see the status table) |
+| Live Jev with orders, deployed host, 2026-10-11 | One routine order through `POST /chat` with `JEV_MODE=live`: three `NO_CONCERN` answers from `jev-1.13.0` (confidence 100%, 98%, 94%), order placed at $13.00, case page labelled "Jev: Live". A manipulation attempt and a phone call with live Jev have **not** been run |
 
 Local rehearsal calls:
 
@@ -464,7 +464,7 @@ substitute a fake client.
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; three checks per request; five live scenarios and two local app flows verified on 2026-10-11 |
 | Receptionist (SSA-014, SSA-031) | Wired to the real gate and order connector; live chat rehearsed locally for orders on 2026-10-11 (see the SSA-031 section) |
 | Dashboard (SSA-015) | See the SSA-015 section above |
-| Voice | Unfinished; assigned to the other demo issues |
+| Voice (SSA-023) | Twilio webhook and ConversationRelay WebSocket on the deployed host; one real call placed an order on 2026-10-11. A flagged call by phone is untested. Twilio's `X-Twilio-Signature` is **not** validated, so anyone who knows the URL can open a fake call; such a call still goes through the same gate and staff review. A chat model call is allowed 30 seconds and a Jev call 8 seconds; the caller hears a "one moment" line while waiting. The browser microphone (SSA-030) is not on `main` |
 
 ## Deploying on Akamai (SSA-021)
 
@@ -526,7 +526,7 @@ a powered-off Linode is still billed.
 |---|---|
 | `/healthz` over HTTPS on the Linode reports the managed database reachable | Passed 2026-10-10: `{"status":"ok","database":"reachable"}` with a Let's Encrypt certificate; still healthy after `restart app` |
 | A booking survives an app container restart on the deployed host | Passed 2026-10-10: a haircut booked through `POST /chat` with live `hackathon-chat` (gate providers `fake`) was still in the managed database after `restart app` |
-| Twilio reaches `wss://…/voice/stream` | Not run yet; the voice route (SSA-023) is not on `main` |
+| Twilio reaches `wss://…/voice/stream` | One real call on 2026-10-11 placed an order by voice (see the SSA-031 verification table) |
 | No secrets committed; database not open to all addresses | Passed 2026-10-10: allow list is one dev `/32` and the Linode `/32`; port 8000 closed publicly; `.env.deploy` ignored by git |
 
 Checked locally only: the compose stack with a throwaway PostgreSQL container and
