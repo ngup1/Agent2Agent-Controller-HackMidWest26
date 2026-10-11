@@ -6,9 +6,8 @@
 --blue:#1c7ed6;--blue-bg:#e7f5ff;--green:#2b8a3e;--green-bg:#ebfbee;--red:#c92a2a;--red-bg:#fff5f5;--grey:#868e96;--grey-bg:#f1f3f5;
 font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:var(--ink);background:var(--page)}
 *{box-sizing:border-box}body{margin:0}
-.topbar{display:flex;align-items:center;gap:.75rem;height:50px;padding:0 1rem;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:1}
-.topbar .mark{width:22px;height:22px;border-radius:6px;background:var(--accent);flex:none}
-.topbar h1{font-size:1rem;font-weight:600;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar{display:flex;align-items:center;gap:.75rem;height:56px;padding:0 1rem;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:1}
+.topbar h1{font-size:1.3rem;font-weight:600;margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar h1 a{color:inherit;text-decoration:none}.topbar nav a{margin-left:1rem;font-weight:500;text-decoration:none}
 main{max-width:1240px;margin:1rem auto;padding:0 1rem}
 h2{font-size:.95rem;font-weight:600;margin:0 0 .6rem}h3{font-size:.875rem;margin:.9rem 0 .3rem}p{line-height:1.55;margin:.4rem 0}
@@ -43,13 +42,12 @@ input[type=text],textarea{display:block;width:100%;font:inherit;padding:.5rem .6
 textarea.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.45;min-height:26rem;white-space:pre;tab-size:2}
 .sub{font-weight:600;font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 :root.home{font-size:17px}
-.home main{max-width:1500px;margin:0 auto;padding-top:1rem;min-height:calc(100vh - 50px);display:flex;flex-direction:column}
+.home main{max-width:1500px;margin:0 auto;padding-top:1rem;min-height:calc(100vh - 56px);display:flex;flex-direction:column}
 .home #board-content{flex:1;display:flex;flex-direction:column}.home .board{flex:1;align-items:stretch}
-.home .column{padding:1rem}.home .column h2{font-size:1.1rem}.home .card{padding:.8rem .9rem;margin-bottom:.75rem}
+.home .column{padding:1rem}.home .column h2{font-size:1.4rem}.home .column .dot{width:12px;height:12px}.home .card{padding:.8rem .9rem;margin-bottom:.75rem}
 footer{padding:.5rem 0 1.5rem;color:var(--muted);font-size:.8rem}
 </style></head><body>
-<header class="topbar"><span class="mark" aria-hidden="true"></span>
-<h1><a href="/dashboard">Incoming Request Logs{% if shop_name %} - {{ shop_name }}{% endif %}</a></h1>
+<header class="topbar"><h1><a href="/dashboard">Incoming Request Logs{% if shop_name %} - {{ shop_name }}{% endif %}</a></h1>
 <nav aria-label="Dashboard"><a href="/dashboard">Requests</a><a href="/dashboard/settings">Settings</a></nav></header>
 <main>
 {% if preview %}<aside class="notice"><strong>PREVIEW · Synthetic examples · Read only</strong><br>These sample calls are not database records. No orders can be placed here.</aside>{% endif %}
