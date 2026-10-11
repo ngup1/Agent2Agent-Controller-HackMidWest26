@@ -15,7 +15,7 @@ pass: 123
 Phone call ──► Twilio ──► AI receptionist ──► proposes an order
                                                      │
                                                    GATE
-                             1. Shop rules      (menu, $100 limit, allergy words)
+                             1. Shop rules      (ex: menu, $100 limit, allergy words)
                              2. Past calls      (similar requests staff already decided)
                              3. Jev             (override, false authority, intent mismatch)
                                                      │
