@@ -1,5 +1,6 @@
 """Environment configuration; business identity belongs to the server."""
 
+import math
 import os
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -19,10 +20,16 @@ class Settings:
     openai_api_key: str = field(default="", repr=False)
     chat_model: str = "hackathon-chat"
     embedding_model: str = "hackathon-embedding"
+    embedding_mode: str = "live"
+    precedent_similarity_min: float = 0.80
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+        if self.embedding_mode not in {"live", "fake"}:
+            raise ValueError("EMBEDDING_MODE must be live or fake")
+        if not math.isfinite(self.precedent_similarity_min) or not 0 <= self.precedent_similarity_min <= 1:
+            raise ValueError("PRECEDENT_SIMILARITY_MIN must be between 0 and 1")
 
     @classmethod
     def from_env(cls):
@@ -34,4 +41,6 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
+            embedding_mode=os.getenv("EMBEDDING_MODE", cls.embedding_mode),
+            precedent_similarity_min=float(os.getenv("PRECEDENT_SIMILARITY_MIN", cls.precedent_similarity_min)),
         )

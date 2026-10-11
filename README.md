@@ -4,6 +4,12 @@
 establishes the FastAPI/PostgreSQL foundation for the demo in [spec.md](spec.md).
 The shared application package is `backend/`; see [the agent guide](docs/agent-guide.md).
 
+SSA-008 adds a dedicated [precedent retrieval service](docs/ssa-008-precedents.md)
+with explicit live/fake embedding modes and recording export/replay commands.
+Live embedding and basic chat requests were verified against the workshop endpoint
+on 2026-10-10. Recorded-call calibration and conversation/dashboard replay
+integration are still pending. Supply the team key locally; it is not in the repository.
+
 ## Local setup
 
 Requires Docker with Compose and permission to access its daemon:
