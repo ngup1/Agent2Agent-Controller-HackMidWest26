@@ -1,0 +1,6 @@
+# HTTPS and WSS on 443 with an automatic certificate; port 80 only issues and redirects.
+# reverse_proxy passes WebSocket upgrades through, which wss://…/voice/stream needs.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:8000
+}
