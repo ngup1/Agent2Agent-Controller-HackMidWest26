@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import Settings
 from backend.api.dashboard import router as dashboard_router
+from backend.api.voice import router as voice_router
 
 
 def create_app(
@@ -30,6 +31,7 @@ def create_app(
         or partial(_connect, app.state.settings)
     )
     app.include_router(dashboard_router)
+    app.include_router(voice_router)
 
     @app.get("/healthz")
     def healthz():
@@ -75,7 +77,7 @@ def create_app(
             client = OpenAI(
                 base_url=settings.openai_base_url,
                 api_key=settings.openai_api_key,
-                timeout=12.0,
+                timeout=20.0,
                 max_retries=0,
             )
             chat = DatabaseFactsBookingChat(
@@ -90,6 +92,7 @@ def create_app(
     )
     app.state.conversation_service = service
     app.state.conversation_repository = repo
+    app.state.chat_ready = chat_ready
     app.include_router(create_chat_router(
         service=service,
         repository=repo,

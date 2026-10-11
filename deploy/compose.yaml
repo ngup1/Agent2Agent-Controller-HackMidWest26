@@ -12,6 +12,9 @@ services:
   app:
     build: ..
     env_file: ../.env
+    environment:
+      # Twilio connects back to wss://$DOMAIN/voice/stream (SSA-023).
+      PUBLIC_HOST: ${DOMAIN:?set DOMAIN in deploy/.env}
     restart: unless-stopped
     # Not published: Caddy is the only public entry (spec 12.3).
     expose:

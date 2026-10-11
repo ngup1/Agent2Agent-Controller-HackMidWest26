@@ -4,6 +4,21 @@
 establishes the FastAPI/PostgreSQL foundation for the demo in [spec.md](spec.md).
 The shared application package is `backend/`; see [the agent guide](docs/agent-guide.md).
 
+## Deployed app
+
+The demo runs on an Akamai Linode with Akamai Managed PostgreSQL at
+**<https://172-232-10-159.sslip.io>**. The site has no home page; use these paths:
+
+| Path | What it is |
+|---|---|
+| [`/healthz`](https://172-232-10-159.sslip.io/healthz) | Health check, including the managed database |
+| [`/dashboard`](https://172-232-10-159.sslip.io/dashboard) | Staff review queue; asks for the dashboard password |
+| `POST /chat` | Text entry to the receptionist |
+| `POST /voice/incoming`, `wss://…/voice/stream` | Twilio phone path (SSA-023) |
+
+Deployment details, resource IDs and verification results are under
+[Deploying on Akamai (SSA-021)](#deploying-on-akamai-ssa-021).
+
 ## Local setup
 
 Requires Docker with Compose and permission to access its daemon:
