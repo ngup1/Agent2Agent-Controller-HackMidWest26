@@ -6,6 +6,7 @@ from psycopg.rows import dict_row
 
 from backend.connectors.orders import execute
 from backend.database.dashboard import DashboardRepository
+from backend.services.outbound import OutboundService
 
 
 class ReviewNotFound(Exception):
@@ -17,26 +18,29 @@ class ReviewConflict(Exception):
 
 
 class ReviewService:
-    def __init__(self, settings, connection_factory=None, executor=execute):
+    def __init__(self, settings, connection_factory=None, executor=execute, outbound=None):
         self.business_id = settings.business_id
         self.connect = connection_factory or DashboardRepository(settings).connect
         self.executor = executor
+        self.outbound = outbound or OutboundService(settings)
 
     def decide(self, action_id: UUID, decision: str, note: str = ""):
         if decision not in {"approve", "deny"}:
             raise ValueError("Unknown review decision")
         status = "approved" if decision == "approve" else "denied"
+        payload = {}
         with self.connect() as conn:
             # Lock the action before the review. The connector shares this transaction:
             # it sees approval before commit, and a crash rolls both writes back.
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "SELECT state FROM agent_actions WHERE id=%s AND business_id=%s FOR UPDATE",
+                    "SELECT state, payload FROM agent_actions WHERE id=%s AND business_id=%s FOR UPDATE",
                     (action_id, self.business_id),
                 )
                 action = cur.fetchone()
                 if action is None:
                     raise ReviewNotFound()
+                payload = action.get("payload") or {}
                 cur.execute(
                     "SELECT id, status FROM human_reviews WHERE action_id=%s FOR UPDATE",
                     (action_id,),
@@ -63,3 +67,50 @@ class ReviewService:
                 action_id, business_id=self.business_id,
                 connection_factory=lambda: nullcontext(conn),
             )
+
+        # Trigger outbound voice callback after database commit succeeds
+        if decision == "approve" and payload:
+            if isinstance(payload, str):
+                import json
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            callback_number = payload.get("callback_number")
+            if not callback_number:
+                try:
+                    with self.connect() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "SELECT i.callback_number FROM interactions i "
+                                "JOIN agent_actions a ON a.interaction_id = i.id "
+                                "WHERE a.id = %s",
+                                (action_id,),
+                            )
+                            row = cur.fetchone()
+                            if row and row[0]:
+                                callback_number = row[0]
+                except Exception:
+                    pass
+
+            items = payload.get("items", [])
+            if isinstance(items, list) and items:
+                counts: dict[str, int] = {}
+                for item in items:
+                    name = str(item).replace("_", " ")
+                    counts[name] = counts.get(name, 0) + 1
+                service_desc = ", ".join(f"{cnt} {name}" if cnt > 1 else name for name, cnt in counts.items())
+            else:
+                service_desc = payload.get("service", "order")
+
+            if callback_number and self.outbound:
+                try:
+                    self.outbound.call_approved_customer(
+                        to_number=callback_number,
+                        customer_name=payload.get("customer_name", "Valued Customer"),
+                        service=service_desc,
+                        direct=True,
+                    )
+                except Exception:
+                    pass
+
