@@ -73,6 +73,7 @@ def test_untrusted_evidence_is_escaped_in_all_views():
     case["transcript"][0]["content"] = payload
     case["policy_snapshot"]["precedents"][0]["summary"] = payload
     case["note"] = payload
+    case["reasons"][0]["evidence"]["label"] = payload
     repo = Mock()
     repo.queue.return_value = [case]
     repo.recent.return_value = {"calls": [], "bookings": []}
