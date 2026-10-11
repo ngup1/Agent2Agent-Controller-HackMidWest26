@@ -221,7 +221,8 @@ A start time without an offset is read as business-local time.
 
 Besides `rules` and `checks`, `policy_snapshot` holds `precedents` (up to three,
 nearest first, approved or denied), `providers` (the mode each provider ran in) and
-`thresholds`. Jev's verdict, confidence, question and mode are in its reason's evidence.
+`thresholds`. Each Jev check records its own question ID, label, verdict, confidence,
+answer probabilities, provider mode and model in its reason evidence.
 
 `RETRIEVAL_MODE` and `JEV_MODE` select `fake`, `live`, or unset:
 
@@ -243,10 +244,50 @@ nearest first, approved or denied), `providers` (the mode each provider ran in) 
   Use separate demo datasets when switching modes; cached vectors are not replaced.
 - unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
 
+### SSA-009: three JEV checks
+
+One TypeSafe request evaluates **instruction override**, **authority manipulation**,
+and **intent mismatch**. The last check compares the actual proposed service, time
+and party size with the customer's latest request, corrections and confirmation.
+Jev receives the latest 12 speaker-labelled transcript turns (up to 6,000 content
+characters), their timestamps, rule findings and up to three reviewed precedents.
+Truncation is explicit. Retrieval still embeds caller-only text.
+
+Any concern, insufficient context, confidence below 0.80, missing answer or invalid
+answer requires staff review. Valid answers are retained if another check fails.
+The case page displays each check independently, including its answer probabilities;
+confidence is not a probability that a booking is safe. Existing single-question
+case records remain readable. No database migration is required.
+
+Set `TYPESAFE_API_KEY` privately and select `JEV_MODE=live` in the environment used
+to launch the app. For Compose with a deployment env file, pass
+`docker compose --env-file .env.deploy ...`; Python's default `.env` loader does not
+automatically read `.env.deploy`. Keep `RETRIEVAL_MODE` explicitly configured too.
+
+Run the five synthetic live provider checks (real API usage; no bookings or database
+access, only the TypeSafe key/model are read from the specified file):
+
+```bash
+.venv/bin/python -m backend.scripts.check_jev --live --env-file .env.deploy
+# Optional: --case intent_mismatch
+```
+
+On 2026-10-11 all five expectations passed against `jev-1.13.0`. Two additional
+live Jev calls through the app verified an allowed routine booking and an escalated
+intent mismatch with no booking, with all three results persisted and rendered.
+That app check used a disposable local PostgreSQL schema, fake chat and fake
+embeddings; it does not verify deployed chat, voice or cloud services.
+The automatic suite on the PR branch passed **251 tests**, including **46 PostgreSQL integration
+tests**, with fake inference and no skips. See the provider notes for limitations.
+
 Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
 returns `[{interaction_id, summary, outcome, similarity}]`, and
 `assess(action, transcript_excerpt, rule_checks, precedents)` returns
-`{verdict, confidence, question}`.
+`{answers: {question_id: {verdict, confidence, probabilities}}, model}`. The three
+required IDs are defined in `backend/domain/supervision.py`; unavailable answers
+contain `verdict: UNAVAILABLE`, null confidence and a safe error. The transcript
+argument is now a list of `{speaker, content, recorded_at}` turns, not caller-only
+text. The gateway attaches the application-owned question labels to its reasons.
 
 ## Managed database and integration status
 
@@ -276,7 +317,7 @@ substitute a fake client.
 | Managed database and Linode deployment (SSA-021) | Deployed 2026-10-10 at `https://172-232-10-159.sslip.io`; HTTPS health, managed database and booking-after-restart verified; Twilio check pending. See the section below |
 | Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; one live retrieval rehearsal run on the deployed host (see SSA-021 section) |
 | Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; live recall rehearsed once on the deployed host; recordings and threshold calibration pending |
-| Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
+| Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; three checks per request; five live scenarios and two local app flows verified on 2026-10-11 |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
 | Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
 | Dashboard (SSA-015) | See the SSA-015 section above |

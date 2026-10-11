@@ -28,7 +28,7 @@ class GateStore:
         self.connection_factory = connection_factory
 
     def load_action(self, business_id: UUID, action_id: UUID) -> dict | None:
-        """The proposal, its call's caller text, the rules, and any earlier decision."""
+        """The proposal, ordered conversation, caller-only retrieval text and rules."""
         with self.connection_factory() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -42,11 +42,13 @@ class GateStore:
                 if row is None:
                     return None
                 cur.execute(
-                    """SELECT content FROM transcript_segments
-                       WHERE interaction_id=%s AND speaker='caller' ORDER BY sequence_number""",
+                    """SELECT speaker, content, created_at FROM transcript_segments
+                       WHERE interaction_id=%s ORDER BY sequence_number""",
                     (row[0],),
                 )
-                caller_text = " ".join(content for (content,) in cur.fetchall())
+                transcript = [{"speaker": speaker, "content": content, "recorded_at": created_at.isoformat()}
+                              for speaker, content, created_at in cur.fetchall()]
+                caller_text = " ".join(turn["content"] for turn in transcript if turn["speaker"] == "caller")
                 return {
                     "interaction_id": row[0],
                     "action_type": row[1],
@@ -54,6 +56,7 @@ class GateStore:
                     "state": row[3],
                     "booking_rules": row[4] or {},
                     "caller_text": caller_text,
+                    "transcript": transcript,
                     "decision": _stored_decision(cur, action_id),
                 }
 

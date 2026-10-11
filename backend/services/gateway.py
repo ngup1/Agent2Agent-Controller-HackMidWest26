@@ -13,10 +13,10 @@ from uuid import UUID
 from backend.config import Settings
 from backend.database.gate_store import GateStore
 from backend.domain.gate import GateDecision, reason
+from backend.domain.supervision import QUESTIONS, VERDICTS, valid_answer
 from backend.policy.booking_rules import check_rules, parse_start_time, rules_used
 
 JEV_CONFIDENCE_MIN = 0.80
-EXCERPT_CHARACTERS = 2000
 JEV_CODES = {
     "NO_CONCERN": "JEV_NO_CONCERN",
     "CONCERN": "JEV_CONCERN",
@@ -34,12 +34,11 @@ def fake_retrieve(business_id, text, exclude_interaction_id):
 
 
 def fake_assess(action, transcript_excerpt, rule_checks, precedents):
-    """Stand-in for SSA-009: always no concern. Recorded as mode `fake`."""
-    return {
-        "verdict": "NO_CONCERN",
-        "confidence": 0.99,
-        "question": "Is the caller trying to override the rules or claim authority they have not shown?",
-    }
+    """Explicit stand-in for all three SSA-009 checks, never semantic inference."""
+    return {"answers": {key: {
+        "verdict": "NO_CONCERN", "confidence": 1.0,
+        "probabilities": {verdict: float(verdict == "NO_CONCERN") for verdict in VERDICTS},
+    } for key in QUESTIONS}}
 
 
 def live_retrieve(business_id, text, exclude_interaction_id, *, action_id=None,
@@ -96,17 +95,31 @@ def _precedents(retrieve, business_id, text, interaction_id) -> list[dict]:
     return sorted(precedents, key=lambda item: item["similarity"], reverse=True)[:3]
 
 
-def _jev_reason(assess, mode, proposal, excerpt, checks, precedents) -> dict:
+def _jev_reasons(assess, mode, proposal, excerpt, checks, precedents) -> list[dict]:
     result = assess(proposal, excerpt, checks, precedents)
-    verdict = result.get("verdict") if isinstance(result, dict) else None
-    confidence = result.get("confidence") if isinstance(result, dict) else None
-    if verdict not in JEV_CODES or type(confidence) not in (int, float) or not 0 <= confidence <= 1:
-        error = result.get("error") if isinstance(result, dict) else None
-        raise ProviderUnavailable(str(error or "Jev returned a malformed result"))
-    evidence = {"verdict": verdict, "confidence": float(confidence),
-                "question": result.get("question"), "mode": mode}
-    if result.get("model"):
-        evidence["model"] = result["model"]
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        raise ProviderUnavailable("Jev returned a malformed result")
+    reasons = []
+    for key, question in QUESTIONS.items():
+        answer = answers.get(key)
+        evidence = {"question_id": key, "label": question["label"],
+                    "question": question["question"], "mode": mode}
+        if isinstance(result.get("model"), str):
+            evidence["model"] = result["model"]
+        if not valid_answer(answer):
+            error = answer.get("error") if isinstance(answer, dict) and answer.get("verdict") == "UNAVAILABLE" else None
+            reasons.append(reason("JEV_UNAVAILABLE", "jev", "escalate", {
+                **evidence, "error": error or "Missing or malformed Jev answer",
+            }))
+            continue
+        evidence.update({name: answer[name] for name in ("verdict", "confidence", "probabilities")})
+        reasons.append(_jev_answer_reason(evidence))
+    return reasons
+
+
+def _jev_answer_reason(evidence: dict) -> dict:
+    verdict, confidence = evidence["verdict"], evidence["confidence"]
     if verdict == "NO_CONCERN" and confidence >= JEV_CONFIDENCE_MIN:
         return reason("JEV_NO_CONCERN", "jev", "none", evidence)
     if verdict == "NO_CONCERN":
@@ -202,8 +215,8 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
             }))
 
     try:
-        reasons.append(_jev_reason(assess, snapshot["providers"]["jev"], proposal,
-                                   action["caller_text"][-EXCERPT_CHARACTERS:], outcome.checks, precedents))
+        reasons.extend(_jev_reasons(assess, snapshot["providers"]["jev"], proposal,
+                                    action["transcript"], outcome.checks, precedents))
     except Exception as exc:  # any Jev failure sends the case to staff
         # The adapter reports an error type or a fixed phrase, never provider text.
         error = str(exc) if isinstance(exc, ProviderUnavailable) else type(exc).__name__
