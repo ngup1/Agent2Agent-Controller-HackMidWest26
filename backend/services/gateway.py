@@ -6,6 +6,7 @@ action to `allowed`, `pending_review` or `rejected`; execution is SSA-005.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import partial
 from uuid import UUID
 
 from backend.config import Settings
@@ -45,9 +46,9 @@ def live_retrieve(business_id, text, exclude_interaction_id):
     raise ProviderUnavailable("Precedent retrieval (SSA-008) is not integrated yet")
 
 
-def live_assess(action, transcript_excerpt, rule_checks, precedents):
-    # SSA-009 replaces this body with its assess call.
-    raise ProviderUnavailable("Jev (SSA-009) is not integrated yet")
+def live_assess(action, transcript_excerpt, rule_checks, precedents, settings=None):
+    from backend.providers import jev
+    return jev.assess(action, transcript_excerpt, rule_checks, precedents, settings=settings)
 
 
 def _unconfigured(name):
@@ -87,9 +88,12 @@ def _jev_reason(assess, mode, proposal, excerpt, checks, precedents) -> dict:
     verdict = result.get("verdict") if isinstance(result, dict) else None
     confidence = result.get("confidence") if isinstance(result, dict) else None
     if verdict not in JEV_CODES or type(confidence) not in (int, float) or not 0 <= confidence <= 1:
-        raise ProviderUnavailable("Jev returned a malformed or unavailable result")
+        error = result.get("error") if isinstance(result, dict) else None
+        raise ProviderUnavailable(str(error or "Jev returned a malformed result"))
     evidence = {"verdict": verdict, "confidence": float(confidence),
                 "question": result.get("question"), "mode": mode}
+    if result.get("model"):
+        evidence["model"] = result["model"]
     if verdict == "NO_CONCERN" and confidence >= JEV_CONFIDENCE_MIN:
         return reason("JEV_NO_CONCERN", "jev", "none", evidence)
     if verdict == "NO_CONCERN":
@@ -148,6 +152,8 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         "jev": "injected" if assess else settings.jev_mode or "unset",
     }
     retrieve = retrieve or RETRIEVERS[settings.retrieval_mode]
+    if assess is None and settings.jev_mode == "live":
+        assess = partial(live_assess, settings=settings)
     assess = assess or ASSESSORS[settings.jev_mode]
     snapshot["thresholds"] = {"precedent_similarity_min": settings.precedent_similarity_min,
                               "jev_confidence_min": JEV_CONFIDENCE_MIN}
@@ -172,8 +178,10 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         reasons.append(_jev_reason(assess, snapshot["providers"]["jev"], proposal,
                                    action["caller_text"][-EXCERPT_CHARACTERS:], outcome.checks, precedents))
     except Exception as exc:  # any Jev failure sends the case to staff
+        # The adapter reports an error type or a fixed phrase, never provider text.
+        error = str(exc) if isinstance(exc, ProviderUnavailable) else type(exc).__name__
         reasons.append(reason("JEV_UNAVAILABLE", "jev", "escalate",
-                              {"mode": snapshot["providers"]["jev"], "error": type(exc).__name__}))
+                              {"mode": snapshot["providers"]["jev"], "error": error}))
 
     escalates = any(item["effect"] == "escalate" for item in reasons)
     decision = "escalate" if escalates else "allow"

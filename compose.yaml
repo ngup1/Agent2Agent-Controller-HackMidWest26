@@ -26,6 +26,8 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-hackathon-embedding}
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-}
       JEV_MODE: ${JEV_MODE:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      TYPESAFE_MODEL: ${TYPESAFE_MODEL:-}
       PRECEDENT_SIMILARITY_MIN: ${PRECEDENT_SIMILARITY_MIN:-0.80}
     command: ["sh", "-c", "python -m backend.scripts.init_db && python -m backend.scripts.seed"]
     depends_on:
