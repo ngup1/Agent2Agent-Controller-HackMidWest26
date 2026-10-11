@@ -63,7 +63,7 @@ class Settings:
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
             embedding_mode=os.getenv("EMBEDDING_MODE", cls.embedding_mode).strip().lower(),
-            dashboard_password=os.getenv("DASHBOARD_PASSWORD", ""),
+            dashboard_password=os.getenv("DASHBOARD_PASSWORD", "").strip() or "demo",
             dashboard_preview=os.getenv("DASHBOARD_PREVIEW", "").lower() in {"1", "true", "yes"},
             retrieval_mode=os.getenv("RETRIEVAL_MODE", "").strip().lower(),
             jev_mode=os.getenv("JEV_MODE", "").strip().lower(),
