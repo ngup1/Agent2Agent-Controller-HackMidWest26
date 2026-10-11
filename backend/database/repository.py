@@ -14,10 +14,10 @@ from psycopg.types.json import Jsonb
 from backend.config import Settings
 
 
-def _connect():
+def _connect(settings: Settings | None = None):
     import psycopg
     from pgvector.psycopg import register_vector
-    conn = psycopg.connect(Settings.from_env().database_url, connect_timeout=10)
+    conn = psycopg.connect((settings or Settings.from_env()).database_url, connect_timeout=10)
     try:
         register_vector(conn)
     except Exception:
@@ -78,8 +78,8 @@ class TranscriptRepository:
                 )
                 seq = cur.fetchone()[0]
                 cur.execute(
-                    """INSERT INTO transcript_segments(interaction_id, sequence_number, speaker, content)
-                       VALUES (%s,%s,%s,%s) RETURNING id""",
+                    """INSERT INTO transcript_segments(interaction_id, sequence_number, speaker, content, created_at)
+                       VALUES (%s,%s,%s,%s,clock_timestamp()) RETURNING id""",
                     (interaction_id, seq, speaker, transcript),
                 )
                 segment_id = cur.fetchone()[0]
@@ -135,8 +135,8 @@ class TranscriptRepository:
                     raise ValueError("Unknown interaction for this business")
                 cur.execute(
                     """INSERT INTO agent_actions
-                       (business_id, interaction_id, action_type, payload, idempotency_key)
-                       VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+                       (business_id, interaction_id, action_type, payload, idempotency_key, created_at)
+                       VALUES (%s,%s,%s,%s,%s,clock_timestamp()) RETURNING id""",
                     (business_id, interaction_id, action_type, Jsonb(payload), str(uuid4())),
                 )
                 return cur.fetchone()[0]
@@ -202,3 +202,89 @@ class TranscriptRepository:
                 )
                 rows = cur.fetchall()
         return [{"segment_id": r[0], "transcript": r[1], "distance": float(r[2])} for r in rows]
+
+    def get_proposal_transcript(self, business_id: UUID, action_id: UUID) -> dict | None:
+        """Caller text up to proposal creation; later utterances cannot change it.
+
+        The conversation lane persists caller segments before creating the action.
+        Proposals sharing the same last caller segment share the same request text.
+        """
+        with self.connection_factory() as conn:
+            rows = conn.execute(
+                """SELECT a.interaction_id, s.id, s.content
+                   FROM agent_actions a
+                   JOIN interactions i ON i.id=a.interaction_id AND i.business_id=a.business_id
+                   JOIN transcript_segments s ON s.interaction_id=a.interaction_id
+                   WHERE a.id=%s AND a.business_id=%s AND a.action_type='book_appointment'
+                     AND s.speaker='caller' AND s.created_at <= a.created_at
+                   ORDER BY s.sequence_number""",
+                (action_id, business_id),
+            ).fetchall()
+        if not rows:
+            return None
+        return {"interaction_id": rows[-1][0], "segment_id": rows[-1][1],
+                "text": "\n".join(row[2] for row in rows)}
+
+    def get_embedding(self, business_id: UUID, segment_id: int) -> dict | None:
+        with self.connection_factory() as conn:
+            row = conn.execute(
+                """SELECT e.embedding_model, e.embedding::real[]
+                   FROM transcript_embeddings e
+                   JOIN transcript_segments s ON s.id=e.transcript_segment_id
+                   JOIN interactions i ON i.id=s.interaction_id
+                   WHERE s.id=%s AND i.business_id=%s""",
+                (segment_id, business_id),
+            ).fetchone()
+        return None if row is None else {"model": row[0], "vector": list(row[1])}
+
+    def search_precedents(self, business_id: UUID, embedding: Sequence[float],
+                          current_interaction_id: UUID, embedding_model: str,
+                          limit: int = 3) -> list[dict]:
+        """Exact cosine ranking of distinct decided calls, with current review state.
+
+        Select the latest decided proposal per call before ranking, so neither
+        duplicate proposals nor old approved decisions hide a later denial.
+        Exclude the entire current interaction before ranking and limiting,
+        including its earlier proposals and any already-decided reviews.
+        """
+        if len(embedding) != 1024:
+            raise ValueError("Embedding must contain 1024 dimensions")
+        if not 1 <= limit <= 20:
+            raise ValueError("limit must be 1-20")
+        with self.connection_factory() as conn:
+            rows = conn.execute(
+                """WITH decided AS (
+                       SELECT DISTINCT ON (a.interaction_id)
+                              a.interaction_id, a.created_at, r.status
+                       FROM agent_actions a
+                       JOIN interactions i ON i.id=a.interaction_id AND i.business_id=a.business_id
+                       JOIN human_reviews r ON r.action_id=a.id
+                       WHERE a.business_id=%s AND a.interaction_id<>%s
+                         AND a.action_type='book_appointment'
+                         AND r.status IN ('approved', 'denied')
+                       ORDER BY a.interaction_id, r.decided_at DESC NULLS LAST,
+                                a.created_at DESC, a.id DESC
+                   )
+                   SELECT d.interaction_id, left(t.summary, 500), d.status,
+                          1 - (e.embedding <=> %s::vector) AS similarity
+                   FROM decided d
+                   JOIN LATERAL (
+                       SELECT s.id, s.sequence_number FROM transcript_segments s
+                       WHERE s.interaction_id=d.interaction_id AND s.speaker='caller'
+                         AND s.created_at<=d.created_at
+                       ORDER BY s.sequence_number DESC LIMIT 1
+                   ) anchor ON true
+                   JOIN transcript_embeddings e ON e.transcript_segment_id=anchor.id
+                   JOIN LATERAL (
+                       SELECT string_agg(s.content, E'\\n' ORDER BY s.sequence_number) AS summary
+                       FROM transcript_segments s
+                       WHERE s.interaction_id=d.interaction_id AND s.speaker='caller'
+                         AND s.sequence_number<=anchor.sequence_number
+                   ) t ON true
+                   WHERE e.embedding_model=%s
+                   ORDER BY similarity DESC, d.interaction_id
+                   LIMIT %s""",
+                (business_id, current_interaction_id, list(embedding), embedding_model, limit),
+            ).fetchall()
+        return [{"interaction_id": str(r[0]), "summary": r[1], "outcome": r[2],
+                 "similarity": float(r[3])} for r in rows]

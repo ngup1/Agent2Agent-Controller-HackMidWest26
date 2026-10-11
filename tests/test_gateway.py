@@ -18,6 +18,16 @@ DENIED = {"interaction_id": "past-call", "summary": "Said the owner approved it"
 APPROVED = {"interaction_id": "ok-call", "summary": "Routine haircut", "outcome": "approved", "similarity": 0.97}
 
 
+@pytest.fixture(autouse=True)
+def retrieval_boundary(monkeypatch):
+    """Unit tests isolate storage; integration tests exercise actual pgvector."""
+    def retrieve(*args, settings, **kwargs):
+        if settings.retrieval_mode == "fake":
+            return []
+        raise RuntimeError("Explicit unavailable provider for isolated unit tests")
+    monkeypatch.setattr("backend.services.gateway.live_retrieve", retrieve)
+
+
 def proposal(**changes):
     return {"service": "haircut", "start_time": "2026-10-11T15:00:00-05:00", "party_size": 1,
             "customer_name": "Sam", **changes}

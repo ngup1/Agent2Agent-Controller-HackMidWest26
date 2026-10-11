@@ -5,13 +5,13 @@ its HMAC-bound token. Demo-only secret must be supplied by the app (no default).
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from backend.services.conversation_tokens import conversation_token_for
 
 
 class ChatRequest(BaseModel):
@@ -39,8 +39,7 @@ def create_chat_router(*, service: Any, repository: Any, business_id: UUID, secr
         raise ValueError("Configure a long server-side CHAT_SESSION_SECRET")
 
     def token_for(interaction_id: UUID) -> str:
-        message = f"ssa014:{business_id}:{interaction_id}".encode("utf-8")
-        return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+        return conversation_token_for(secret, business_id, interaction_id)
 
     router = APIRouter()
 
