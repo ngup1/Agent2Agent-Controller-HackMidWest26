@@ -111,18 +111,6 @@ bash deploy/deploy_linode.sh env     # write the managed DATABASE_URL into .env.
 bash deploy/deploy_linode.sh apply   # create or reuse the Linode (billed), deploy, wait for HTTPS
 ```
 
-## What is real, and what is not
-
-| Verified on the deployed host | Not done |
-|---|---|
-| A real phone call placed an order by voice | A flagged order by phone (flagged orders were tested by text only) |
-| Routine order placed; allergy mention sent to staff | Twilio webhook signatures are not validated |
-| Live Jev answered all three checks on a routine order | A manipulation attempt against live Jev through the app |
-| Live precedent recall flagged a repeat of a denied request | Similarity threshold is not calibrated |
-| Stored records survive an app restart | Payments, pickup times, item modifiers, outbound callbacks |
-
-Each case page labels retrieval and Jev as **Fake** or **Live** for that decision. Menu, prices and callers are synthetic.
-
 ## More detail
 
 - [Engineering notes](docs/engineering-notes.md): verification record, gate internals, deployment
