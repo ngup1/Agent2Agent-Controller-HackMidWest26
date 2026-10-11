@@ -11,35 +11,17 @@ pass: 123
 
 ## How it works
 
-```mermaid
-sequenceDiagram
-    actor Caller
-    participant Twilio
-    participant R as AI receptionist
-    participant G as Gate
-    participant DB as PostgreSQL + pgvector
-    participant Jev
-    actor Staff
-
-    Caller->>Twilio: Phone call
-    Twilio->>R: Transcribed speech
-    R->>Caller: Reads the order back
-    Caller->>R: "Yes"
-    R->>G: Proposed order
-    G->>DB: 1. Shop rules (menu, $100 limit, allergy words)
-    G->>DB: 2. Similar past calls staff decided
-    G->>Jev: 3. Override, false authority, intent mismatch
-    alt allow
-        G->>DB: Place the order
-        R->>Caller: "Your order is placed"
-    else escalate
-        G->>Staff: Review on the dashboard
-        R->>Caller: "Staff will call you back"
-        Staff->>DB: Approve (places the order) or deny
-        Twilio->>Caller: Callback confirming the approved order
-    else clarify
-        R->>Caller: Asks again
-    end
+```text
+Phone call ──► Twilio ──► AI receptionist ──► proposes an order
+                                                     │
+                                                   GATE
+                             1. Shop rules      (menu, $100 limit, allergy words)
+                             2. Past calls      (similar requests staff already decided)
+                             3. Jev             (override, false authority, intent mismatch)
+                                                     │
+                        ┌────────────────────────────┼────────────────────────────┐
+                      allow                       escalate                     clarify
+                  order placed            staff review + callback          ask the caller again
 ```
 
 - **The model only proposes.** It never prices, approves or places an order. The server computes totals from the stored menu.
