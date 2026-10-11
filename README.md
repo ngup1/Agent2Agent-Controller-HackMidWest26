@@ -182,9 +182,10 @@ The inherited Akamai adapter is in `backend/providers/akamai.py`; imports from
 are retained. A live adapter requires a key and propagates failures; it does not
 substitute a fake client.
 
-| Component | Status in SSA-001 |
+| Component | Status |
 |---|---|
-| PostgreSQL/pgvector and health endpoint | Real persistence; integration tests require a local database |
+| PostgreSQL/pgvector and health endpoint (SSA-001) | Real persistence; integration tests require a local database |
+| Mock calendar & execution connector (SSA-005) | Implemented (`backend/connectors/booking.py`); verified via 4 integration tests |
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
