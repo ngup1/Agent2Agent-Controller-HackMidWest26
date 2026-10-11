@@ -11,25 +11,28 @@ from backend.services.gateway import evaluate
 from tests.test_gateway import FakeStore, NOW, proposal
 
 
-def test_live_gateway_uses_the_persisted_action_id(monkeypatch):
+@pytest.mark.parametrize("retrieval_mode", ["fake", "live"])
+@pytest.mark.parametrize("embedding_mode", ["fake", "live"])
+def test_gateway_uses_persisted_action_and_retrieval_mode(monkeypatch, retrieval_mode, embedding_mode):
     action_id = uuid4()
     seen = []
 
     def fake_persisted_precedents(self, received_id, k=3):
-        seen.append((received_id, k, self.business_id))
+        seen.append((received_id, k, self.business_id, type(self.provider)))
         return [{"interaction_id": "earlier", "summary": "Owner approval claim",
                  "outcome": "denied", "similarity": 0.95}]
 
     monkeypatch.setattr(PrecedentService, "retrieve_for_action", fake_persisted_precedents)
     store = FakeStore(proposal())
-    settings = Settings(retrieval_mode="live", embedding_mode="fake", jev_mode="fake")
+    settings = Settings(retrieval_mode=retrieval_mode, embedding_mode=embedding_mode, jev_mode="fake")
     result = evaluate(action_id, now=NOW, store=store, settings=settings)
     assert result.decision == "escalate"
     assert result.risk_level == "high"
     assert "SIMILAR_TO_DENIED" in [r["code"] for r in result.reasons]
-    assert seen == [(action_id, 3, settings.business_id)]
-    assert result.policy_snapshot["providers"]["retrieval"] == "live"
-    assert result.policy_snapshot["providers"]["embeddings"] == "fake"
+    provider_type = LiveEmbeddingProvider if retrieval_mode == "live" else FakeEmbeddingProvider
+    assert seen == [(action_id, 3, settings.business_id, provider_type)]
+    assert result.policy_snapshot["providers"]["retrieval"] == retrieval_mode
+    assert result.policy_snapshot["providers"]["embeddings"] == retrieval_mode
     assert store.applied == [result]
 
 
