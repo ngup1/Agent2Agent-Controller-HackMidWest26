@@ -7,7 +7,7 @@
 <p>Action: <strong>{{ case.state }}</strong> · Review: <strong>{{ case.review_status or "No staff review" }}</strong> · Gate: {{ case.decision or "Not assessed" }}</p>
 <p class="muted">Call received {{ case.created_at|business_time }} · {{ case.channel }}<br>Action ID: {{ case.action_id }}</p>
 <h2>Why this case needs attention</h2>
-<ul>{% for reason in case.reasons or [] %}<li class="reason">{{ reason.code|reason_text }} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
+<ul>{% for reason in case.reasons or [] %}<li class="reason">{% if reason.evidence and reason.evidence.label %}{{ reason.evidence.label }}: {% endif %}{{ reason.code|reason_text }} <span class="muted">({{ reason.code }})</span></li>{% else %}<li>No assessment reasons recorded.</li>{% endfor %}</ul></section>
 <div class="grid"><section><h2>Proposed booking</h2>
 <dl><dt>Service</dt><dd>{{ case.payload.service or "Not recorded" }}</dd>
 <dt>Requested time</dt><dd>{{ case.payload.start_time|business_time }}</dd>
@@ -36,12 +36,19 @@
 <thead><tr><th scope="col">Rule</th><th scope="col">Limit</th><th scope="col">Actual</th><th scope="col">Result</th></tr></thead>
 <tbody>{% for check in case.checks %}<tr><td>{{ check.rule }}</td><td>{{ check.limit }}</td><td>{{ check.actual }}</td><td>{{ check.result|replace("_", " ") }}</td></tr>{% else %}<tr><td colspan="4">No rule checks recorded.</td></tr>{% endfor %}</tbody></table></div></section>
 <div class="grid"><section><h2>Jev assessment</h2>
+<p class="muted">Each check is assessed separately. Confidence describes the model's answer distribution, not the probability a booking is safe.</p>
 {% for reason in case.jev_reasons %}{% set evidence = reason.evidence or {} %}
+{% if evidence.label %}<h3>{{ evidence.label }}</h3>{% endif %}
 <p><strong>{{ reason.code|reason_text }}</strong></p>
 <dl><dt>Verdict</dt><dd>{{ evidence.verdict or "Not recorded" }}</dd>
 <dt>Confidence</dt><dd>{{ evidence.get("confidence")|percentage }}</dd>
 <dt>Mode</dt><dd>{{ evidence.mode or "Not recorded" }}</dd>
+<dt>Model</dt><dd>{{ evidence.model or "Not recorded" }}</dd>
+{% if evidence.error %}<dt>Availability</dt><dd>{{ evidence.error }}</dd>{% endif %}
 <dt>Question</dt><dd>{{ evidence.question or "Not recorded" }}</dd></dl>
+{% if evidence.probabilities %}<details><summary>Answer probabilities</summary><dl>
+{% for verdict, probability in evidence.probabilities.items() %}<dt>{{ verdict }}</dt><dd>{{ probability|percentage }}</dd>{% endfor %}
+</dl></details>{% endif %}
 {% else %}<p>{{ "Not checked: this request needs clarification before provider assessment." if case.providers_skipped else "No Jev assessment recorded." }}</p>{% endfor %}</section>
 <section><h2>Nearest precedents</h2><p class="muted">Nearest first. Similarity compares requests; it is not an attack probability. Approved precedents do not override rules.</p>
 {% for precedent in case.precedents %}<p><strong>{{ precedent.outcome|capitalize }} · Similarity {{ precedent.similarity|percentage }}</strong><br>{{ precedent.summary }}<br><span class="muted">Call: {{ precedent.interaction_id }}</span></p>

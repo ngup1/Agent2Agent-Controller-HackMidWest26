@@ -87,7 +87,7 @@ def test_denial_becomes_gate_jev_and_dashboard_evidence_for_later_call(database,
     seen = []
     def assess(action, excerpt, checks, precedents):
         seen.append(precedents)
-        return {"verdict": "NO_CONCERN", "confidence": 0.99}
+        return gateway.fake_assess(action, excerpt, checks, precedents)
     monkeypatch.setitem(gateway.ASSESSORS, "fake", assess)
     with app_client(database) as client:
         client.auth = ("staff", SETTINGS.dashboard_password)

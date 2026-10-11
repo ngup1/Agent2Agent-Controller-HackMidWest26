@@ -1,12 +1,14 @@
 """Gate against real PostgreSQL: the decision row, state change and review row."""
 
+from contextlib import nullcontext
 from datetime import datetime
 
 import pytest
 
 from backend.config import DEMO_BUSINESS_ID, Settings
 from backend.database.gate_store import GateStore
-from backend.services.gateway import evaluate
+from backend.database.repository import TranscriptRepository
+from backend.services.gateway import evaluate, fake_assess
 
 from .test_foundation import CLOCK, PROPOSAL, database  # noqa: F401
 
@@ -32,6 +34,51 @@ def state(database, action, interaction):
         conn.execute("SELECT status FROM human_reviews WHERE action_id=%s", (action,)).fetchall(),
         conn.execute("SELECT status FROM interactions WHERE id=%s", (interaction,)).fetchone()[0],
     )
+
+
+@pytest.mark.parametrize("shared_transaction", [False, True], ids=["separate-transactions", "shared-transaction"])
+def test_delayed_gate_uses_each_proposals_conversation_boundary(database, shared_transaction):
+    before = [
+        ("caller", "A haircut tomorrow at three for one please"),
+        ("business_agent", "A haircut at three for one. Is that correct?"),
+        ("caller", "Yes"),
+    ]
+    after = [
+        ("caller", "Actually, make it two people"),
+        ("business_agent", "A haircut at three for two. Is that correct?"),
+        ("caller", "Yes, two people"),
+    ]
+    assessed, retrieved = [], []
+
+    def assess(proposal, transcript, checks, precedents):
+        assessed.append([(turn["speaker"], turn["content"]) for turn in transcript])
+        return fake_assess(proposal, transcript, checks, precedents)
+
+    def retrieve(business_id, text, exclude_interaction_id):
+        retrieved.append(text)
+        return []
+
+    with database.connect() as conn:
+        connect = (lambda: nullcontext(conn)) if shared_transaction else database.connect
+        repo, store = TranscriptRepository(connect), GateStore(connect)
+        with conn.transaction() if shared_transaction else nullcontext():
+            interaction = repo.create_interaction(DEMO_BUSINESS_ID, "api")
+            for speaker, content in before:
+                repo.save_segment(DEMO_BUSINESS_ID, interaction, content, speaker=speaker)
+            first = repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL)
+            for speaker, content in after:
+                repo.save_segment(DEMO_BUSINESS_ID, interaction, content, speaker=speaker)
+            second = repo.create_action(DEMO_BUSINESS_ID, interaction, PROPOSAL | {"party_size": 2})
+
+            # Both assessments run after the later conversation and proposal exist.
+            for action, expected_decision in [(first, "allow"), (second, "escalate")]:
+                decision = evaluate(action, now=CLOCK, store=store, settings=SETTINGS,
+                                    retrieve=retrieve, assess=assess)
+                assert decision.decision == expected_decision
+
+    assert assessed == [before, before + after]
+    assert retrieved == [" ".join(content for speaker, content in turns if speaker == "caller")
+                         for turns in (before, before + after)]
 
 
 def test_gate_persists_one_decision_and_moves_the_action(database):

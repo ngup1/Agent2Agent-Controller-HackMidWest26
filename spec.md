@@ -73,7 +73,9 @@ Agree these before building in parallel. Changing one means telling every lane. 
   "reasons": [
     {"code": "GROUP_SIZE", "source": "rule", "effect": "escalate", "evidence": {"limit": 1, "actual": 3}},
     {"code": "SIMILAR_TO_DENIED", "source": "precedent", "effect": "escalate", "evidence": {"interaction_id": "…", "similarity": 0.86, "summary": "…"}},
-    {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"confidence": 0.91}}
+    {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "instruction_override", "confidence": 0.91}},
+    {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "authority_manipulation", "confidence": 0.91}},
+    {"code": "JEV_NO_CONCERN", "source": "jev", "effect": "none", "evidence": {"question_id": "intent_mismatch", "confidence": 0.91}}
   ],
   "policy_snapshot": {
     "rules": {"max_party_size_auto": 1, "max_party_size_hard": 3, "min_notice_minutes_auto": 120, "min_notice_minutes_hard": 30},
@@ -1582,8 +1584,10 @@ Do not implement these during the hackathon. Where scope was folded, the survivi
 **Scope**
 
 - Verify the TypeSafe SDK call with the team's key: request shape, model selection, and response fields (section 7.4). Note what was observed in a few lines in `docs/provider-compatibility.md`.
-- `assess(action, transcript_excerpt, rule_checks, precedents)` returns `{verdict, confidence, question}` where verdict is `NO_CONCERN`, `CONCERN`, or `INSUFFICIENT_CONTEXT`.
-- Start with one question: is the caller trying to override the rules or claim authority they have not shown? Add the other two questions from section 7.4 only if time allows.
+- `assess(action, transcript_excerpt, rule_checks, precedents)` returns `{answers: {question_id: {verdict, confidence, probabilities}}, model}`. Each verdict is `NO_CONCERN`, `CONCERN`, or `INSUFFICIENT_CONTEXT`; an unavailable answer has `verdict: UNAVAILABLE`, null confidence and a safe error.
+- The three-question extension was selected on 2026-10-11: ask `instruction_override`, `authority_manipulation`, and `intent_mismatch` (section 7.4) in one request. All three are required. Each yields a separate gateway reason with its ID, label, question, verdict, confidence, probabilities, provider mode and model when available.
+- Supply ordered, speaker-labelled turns with timestamps through the proposal's creation, including the receptionist recap and customer confirmation. Later messages cannot change an earlier proposal's assessment context. Bound the excerpt to the latest 12 turns and 6,000 content characters and mark truncation. Caller-only text remains the input to precedent retrieval.
+- Preserve valid answers when another answer is missing or malformed; mark that check unavailable and escalate. Old stored single-question decisions remain readable.
 - A timeout or SDK error returns an explicit `unavailable` result, never a silent allow.
 - Provide a fake mode for offline tests, labelled as fake.
 
@@ -1591,10 +1595,11 @@ Do not implement these during the hackathon. Where scope was folded, the survivi
 
 - [ ] One live Jev call succeeds and its result appears in the dashboard's evidence panel.
 - [ ] In the demo script, the manipulation call yields a concern and the routine call does not.
+- [ ] Each of the three checks can independently trigger review, and an explicit customer correction is compared against the latest proposal. Every answer appears separately on the case page.
 - [ ] An SDK failure or timeout produces `unavailable`, which the gate escalates to staff.
 - [ ] Missing Jev access is reported as a blocker, not replaced by the fake without saying so.
 
-**Test plan:** Unit tests for response parsing and the failure path using the fake; one manual live call.
+**Test plan:** Unit tests for each question, response completeness, probabilities, confidence and failure paths; real PostgreSQL tests for evidence, confirmation context and booking/review outcomes; synthetic live smoke calls for routine, override, authority, intent mismatch and corrected requests.
 
 **Out of scope:** Self-hosting Jev, prompt tuning beyond the demo cases, prose explanations Jev does not supply, checks on generated replies.
 

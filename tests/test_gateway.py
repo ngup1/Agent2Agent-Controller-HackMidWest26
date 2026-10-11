@@ -7,6 +7,7 @@ import pytest
 
 from backend.config import Settings
 from backend.domain.gate import GateDecision
+from backend.domain.supervision import QUESTIONS, VERDICTS
 from backend.policy.booking_rules import SlotFacts, check_rules
 from backend.scripts.seed import BOOKING_RULES
 from backend.services.gateway import evaluate, fake_assess, fake_retrieve
@@ -39,7 +40,7 @@ class FakeStore:
     def __init__(self, payload, facts=OPEN_SLOT, caller_text="I'd like a haircut tomorrow at three"):
         self.action = {"interaction_id": uuid4(), "action_type": "book_appointment", "payload": payload,
                        "state": "proposed", "booking_rules": BOOKING_RULES, "caller_text": caller_text,
-                       "decision": None}
+                       "transcript": [{"speaker": "caller", "content": caller_text}], "decision": None}
         self.facts, self.applied = facts, []
 
     def load_action(self, business_id, action_id):
@@ -72,13 +73,10 @@ def unavailable(*args):
 def test_routine_request_is_allowed_and_fakes_are_labelled():
     decision = decide()
     assert (decision.decision, decision.risk_level) == ("allow", "low")
-    assert codes(decision) == ["JEV_NO_CONCERN"]
-    assert decision.reasons[0]["evidence"]["mode"] == "fake"
-    assert decision.policy_snapshot["providers"] == {
-        "retrieval": "fake",
-        "jev": "fake",
-        "embeddings": "fake"
-    }
+    assert codes(decision) == ["JEV_NO_CONCERN"] * 3
+    assert [reason["evidence"]["question_id"] for reason in decision.reasons] == list(QUESTIONS)
+    assert all(reason["evidence"]["mode"] == "fake" for reason in decision.reasons)
+    assert decision.policy_snapshot["providers"] == {"retrieval": "fake", "jev": "fake", "embeddings": "fake"}
     assert decision.policy_snapshot["rules"] == {
         "max_party_size_auto": 1, "max_party_size_hard": 3,
         "min_notice_minutes_auto": 120, "min_notice_minutes_hard": 30,
@@ -130,6 +128,11 @@ def test_provider_failure_or_malformed_result_escalates_as_unknown(retrieve, ass
     decision = decide(retrieve=retrieve, assess=assess)
     assert (decision.decision, decision.risk_level) == ("escalate", "unknown")
     assert code in codes(decision)
+    if code == "JEV_UNAVAILABLE":
+        evidence = next(item["evidence"] for item in decision.reasons if item["code"] == code)
+        assert evidence["verdict"] == "UNAVAILABLE"
+        assert evidence["confidence"] is None
+        assert "probabilities" not in evidence
 
 
 def test_unset_provider_modes_escalate_instead_of_using_a_fake():
@@ -138,8 +141,10 @@ def test_unset_provider_modes_escalate_instead_of_using_a_fake():
     assert codes(decision) == ["RETRIEVAL_UNAVAILABLE", "JEV_UNAVAILABLE"]
     assert decision.policy_snapshot["providers"] == {"retrieval": "unset", "jev": "unset"}
     live = decide(settings=Settings(retrieval_mode="live", jev_mode="live"))  # no key, so no request
-    assert (live.decision, live.reasons[-1]["evidence"]) == (
-        "escalate", {"mode": "live", "error": "TYPESAFE_API_KEY is not set"})
+    assert live.decision == "escalate"
+    assert [reason["code"] for reason in live.reasons if reason["source"] == "jev"] == ["JEV_UNAVAILABLE"] * 3
+    assert all(reason["evidence"]["error"] == "TYPESAFE_API_KEY is not set"
+               for reason in live.reasons if reason["source"] == "jev")
 
 
 @pytest.mark.parametrize("verdict,confidence,code,risk", [
@@ -147,9 +152,57 @@ def test_unset_provider_modes_escalate_instead_of_using_a_fake():
     ("INSUFFICIENT_CONTEXT", 0.95, "JEV_INSUFFICIENT_CONTEXT", "medium"),
     ("NO_CONCERN", 0.79, "JEV_LOW_CONFIDENCE", "medium"),
 ])
-def test_jev_concern_insufficient_context_or_low_confidence_escalates(verdict, confidence, code, risk):
-    decision = decide(assess=lambda *args: {"verdict": verdict, "confidence": confidence, "question": "q"})
-    assert (decision.decision, decision.risk_level, codes(decision)) == ("escalate", risk, [code])
+@pytest.mark.parametrize("question_id", QUESTIONS)
+def test_any_jev_concern_insufficient_context_or_low_confidence_escalates(question_id, verdict, confidence, code, risk):
+    result = fake_assess(None, None, None, None)
+    result["answers"][question_id] = {
+        "verdict": verdict, "confidence": confidence,
+        "probabilities": {key: float(key == verdict) for key in VERDICTS},
+    }
+    decision = decide(assess=lambda *args: result)
+    assert (decision.decision, decision.risk_level) == ("escalate", risk)
+    assert {reason["evidence"]["question_id"]: reason["code"] for reason in decision.reasons} == {
+        key: code if key == question_id else "JEV_NO_CONCERN" for key in QUESTIONS
+    }
+
+
+@pytest.mark.parametrize("replacement", [
+    None, {}, {"verdict": "NO_CONCERN", "confidence": 1.0},
+    {"verdict": "UNAVAILABLE", "confidence": None, "error": "Synthetic timeout"},
+])
+def test_incomplete_required_check_cannot_allow_and_preserves_other_evidence(replacement):
+    result = fake_assess(None, None, None, None)
+    if replacement is None:
+        del result["answers"]["intent_mismatch"]
+    else:
+        result["answers"]["intent_mismatch"] = replacement
+    decision = decide(assess=lambda *args: result)
+    assert (decision.decision, decision.risk_level) == ("escalate", "unknown")
+    assert codes(decision) == ["JEV_NO_CONCERN", "JEV_NO_CONCERN", "JEV_UNAVAILABLE"]
+    evidence = decision.reasons[-1]["evidence"]
+    assert evidence["verdict"] == "UNAVAILABLE"
+    assert evidence["confidence"] is None
+    assert "probabilities" not in evidence
+    assert evidence["error"] == ((replacement or {}).get("error") or "Missing or malformed Jev answer")
+
+
+def test_three_checks_at_confidence_threshold_allow_and_use_speaker_labelled_context():
+    store = FakeStore(proposal())
+    store.action["transcript"].extend([
+        {"speaker": "business_agent", "content": "A haircut at 3 pm for one. Is that correct?"},
+        {"speaker": "caller", "content": "yes"},
+    ])
+    seen = []
+
+    def assess(action, transcript, checks, precedents):
+        seen.append(transcript)
+        result = fake_assess(action, transcript, checks, precedents)
+        for answer in result["answers"].values():
+            answer["confidence"] = 0.80
+        return result
+
+    assert evaluate("action", now=NOW, store=store, assess=assess, settings=SETTINGS).decision == "allow"
+    assert seen == [store.action["transcript"]]
 
 
 def test_nothing_turns_a_rule_failure_into_allow():
