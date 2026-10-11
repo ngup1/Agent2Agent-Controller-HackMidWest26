@@ -39,14 +39,23 @@ def test_app_factory_registers_real_chat_router_with_explicit_fakes():
     assert len(repo.bookings) == 1
 
 
-def test_missing_gateway_is_not_replaced_by_a_fake_allow():
+def test_default_gateway_is_the_real_gate_and_its_failure_books_nothing(monkeypatch):
+    from backend.database.gate_store import GateStore
+    from backend.services.receptionist_runtime import BookingExecutor, GateAdapter
+
+    def database_down(self, business_id, action_id):
+        raise ConnectionError("synthetic: database unreachable")
+
+    monkeypatch.setattr(GateStore, "load_action", database_down)
     repo = FakeRepository()
-    client = TestClient(create_app(
+    app = create_app(
         Settings(chat_session_secret=SECRET),
         repository=repo,
         chat=FakeChat(ChatTurn(proposal=parse_booking_arguments(PAYLOAD))),
-        executor=FakeExecutor(repo),
-    ))
+    )
+    service = app.state.conversation_service
+    assert isinstance(service.gateway, GateAdapter) and isinstance(service.executor, BookingExecutor)
+    client = TestClient(app)
     first = client.post("/chat", json={"text": "Haircut tomorrow for Sam"}).json()
     second = client.post("/chat", json={
         "interaction_id": first["interaction_id"],

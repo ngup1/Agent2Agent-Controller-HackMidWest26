@@ -57,6 +57,14 @@ class FakeRepository:
     def get_booking_for_action(self, action_id):
         return self.bookings.get(action_id)
 
+    def resolve_service(self, spoken):
+        services = {"haircut": "Haircut", "beard_trim": "Beard trim"}
+        wanted = spoken.casefold().replace("_", " ")
+        for code, name in services.items():
+            if wanted in {code.replace("_", " "), name.casefold()}:
+                return {"code": code, "name": name}
+        return None
+
 
 class FakeChat:
     def __init__(self, *responses: ChatTurn):

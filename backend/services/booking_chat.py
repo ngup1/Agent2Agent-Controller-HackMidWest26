@@ -23,7 +23,7 @@ PROPOSE_BOOKING_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "service": {"type": "string", "description": "Name of the salon service"},
+                "service": {"type": "string", "description": "Service code exactly as listed in the published facts, for example haircut"},
                 "start_time": {"type": "string", "description": "ISO 8601 local date/time WITH UTC offset"},
                 "party_size": {"type": "integer"},
                 "customer_name": {"type": "string"},

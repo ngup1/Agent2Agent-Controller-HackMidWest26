@@ -25,6 +25,34 @@ class DatabaseFactsBookingChat:
         ).generate(turns)
 
 
+class GateAdapter:
+    """The SSA-010 gate, run off the event loop with the app's own settings."""
+
+    def __init__(self, settings, connection_factory=None):
+        self.settings = settings
+        self.connection_factory = connection_factory
+
+    async def evaluate(self, action_id):
+        from backend.database.gate_store import GateStore
+        from backend.services import gateway
+        store = GateStore(self.connection_factory) if self.connection_factory else None
+        return await asyncio.to_thread(gateway.evaluate, action_id, settings=self.settings, store=store)
+
+
+class BookingExecutor:
+    """The SSA-005 calendar. It refuses any action the gate or staff did not clear."""
+
+    def __init__(self, settings, connection_factory=None):
+        self.settings = settings
+        self.connection_factory = connection_factory
+
+    async def execute(self, action_id):
+        from backend.connectors import booking
+        return await asyncio.to_thread(
+            booking.execute, action_id, self.settings.business_id, self.connection_factory
+        )
+
+
 class UnavailableGateway:
     """Explicit missing dependency: NEVER an automatic allow."""
 

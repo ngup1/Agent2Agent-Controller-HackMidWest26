@@ -195,7 +195,8 @@ substitute a fake client.
 | Gate (SSA-010) | Rules and persistence real; fake provider modes are labelled; live retrieval unfinished |
 | Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
 | Booking calendar (SSA-005) | Real persistence; see the section below |
-| Receptionist, voice, dashboard | Unfinished; assigned to the other demo issues |
+| Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
+| Voice, dashboard | Unfinished; assigned to the other demo issues |
 
 ## Testing SSA-005: Booking Calendar & Execution Connector
 
@@ -237,7 +238,12 @@ inference calls were not run.
 requires a server-owned `CHAT_SESSION_SECRET` (24+ characters) and live
 `OPENAI_API_KEY`; neither is committed. Run `python3 -m backend.scripts.init_db`
 to apply the new `005_ssa014.sql` pending-proposal table after SSA-001 migrations.
-Confirmation creates an action atomically, but **no booking can complete** until
-SSA-010's gateway and SSA-005's booking executor are connected to the app factory.
+A confirmed proposal now goes through the real gate (SSA-010) and, on `allow`,
+the booking calendar (SSA-005); tests may still inject their own. Set
+`RETRIEVAL_MODE` and `JEV_MODE`, or every bookable request goes to staff review.
+A spoken yes such as "yeah" or "yes, that's correct" confirms; a reply containing
+a change ("yes, but…") clears the proposal. The service the model sends is matched
+to a seeded service by code or display name and stored as its code. No live
+Akamai chat call has been verified yet.
 See [SSA-014 integration guide](docs/ssa-014-integration.md) for wiring, tests,
 and safe fallback behavior.

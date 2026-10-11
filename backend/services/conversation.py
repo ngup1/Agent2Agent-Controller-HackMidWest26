@@ -19,7 +19,13 @@ CALLBACK_LINE = (
     "I've passed this to our staff. Someone will call you back shortly "
     "to confirm. Nothing is booked yet."
 )
-CONFIRM_WORDS = {"yes", "yes please", "confirm", "correct", "that's correct", "that is correct"}
+# A spoken yes varies ("yeah", "yes, that's correct"), so match how it starts.
+AFFIRMATIVE = re.compile(
+    r"^(yes|yeah|yep|yup|sure|ok|okay|correct|right|confirm|absolutely|go ahead|sounds good|"
+    r"that'?s (right|correct)|that is (right|correct))\b"
+)
+# Any of these means the caller is changing the request, not confirming it.
+CHANGE_WORDS = re.compile(r"\b(but|actually|instead|change|wait|except|no|not|don'?t)\b")
 CANCEL_WORDS = {"no", "no thanks", "cancel", "never mind", "nevermind"}
 
 
@@ -28,16 +34,21 @@ def _normalized_yes_no(text: str) -> str:
     return re.sub(r"[.!?]+$", "", text.strip().casefold()).strip()
 
 
+def _is_confirmation(text: str) -> bool:
+    clean = " ".join(re.sub(r"[^\w' ]+", " ", text.casefold()).split())
+    return bool(AFFIRMATIVE.match(clean)) and not CHANGE_WORDS.search(clean)
+
+
 def _display_time(value: datetime, timezone: str) -> str:
     local = value.astimezone(ZoneInfo(timezone))
     time_text = local.strftime("%I:%M %p").lstrip("0")
     return f"{local.strftime('%A, %B')} {local.day} at {time_text}"
 
 
-def _recap(proposal: BookingProposal, timezone: str) -> str:
+def _recap(proposal: BookingProposal, timezone: str, service_name: str | None = None) -> str:
     people = "person" if proposal.party_size == 1 else "people"
     return (
-        f"A {proposal.service} for {proposal.party_size} {people} "
+        f"A {service_name or proposal.service} for {proposal.party_size} {people} "
         f"on {_display_time(proposal.start_time, timezone)}, "
         f"under {proposal.customer_name}. Is that correct?"
     )
@@ -108,7 +119,7 @@ class ConversationService:
         if pending is not None:
             pending_proposal = parse_booking_arguments(pending)
             normalized = _normalized_yes_no(text)
-            if normalized in CONFIRM_WORDS:
+            if _is_confirmation(text):
                 reply = await self._confirm(interaction_id)
             elif normalized in CANCEL_WORDS:
                 self.repository.clear_pending_proposal(interaction_id)
@@ -120,7 +131,7 @@ class ConversationService:
                     "I haven't booked that. Please repeat the service, time, "
                     "party size, and name you want."
                 )
-        elif _normalized_yes_no(text) in CONFIRM_WORDS:
+        elif _is_confirmation(text):
             reply = "I don't have an appointment waiting for confirmation. What would you like to book?"
         else:
             try:
@@ -132,10 +143,18 @@ class ConversationService:
                         if isinstance(model_turn.proposal, BookingProposal)
                         else model_turn.proposal
                     )
+                    # The gate and the calendar match the service code exactly, and the
+                    # model may send the display name. An unknown service is left as
+                    # said, so the gate answers that it is not offered.
+                    service = self.repository.resolve_service(proposal.service)
+                    service_name = None
+                    if service is not None:
+                        proposal = proposal.model_copy(update={"service": service["code"]})
+                        service_name = service["name"].lower()
                     self.repository.store_pending_proposal(interaction_id, proposal.action_payload())
                     if proposal.callback_number:
                         self.repository.set_callback_number(interaction_id, proposal.callback_number)
-                    reply = _recap(proposal, self.business_timezone)
+                    reply = _recap(proposal, self.business_timezone, service_name)
                 else:
                     reply = _safe_nontransactional_text(model_turn.text)
             except (BookingChatError, ValueError) as exc:

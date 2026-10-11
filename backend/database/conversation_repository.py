@@ -6,6 +6,7 @@ confirmation is claimed and an action inserted in the same database transaction.
 """
 from __future__ import annotations
 
+import re
 from contextlib import nullcontext
 from uuid import UUID
 
@@ -120,7 +121,6 @@ class PostgresConversationRepository:
         # Ensure no mistaken authorizations from contact info.
         if not isinstance(number, str) or not number.strip() or len(number) > 32:
             raise ValueError("Invalid callback number")
-        import re
         if not re.fullmatch(r"\+?[0-9() .-]{7,31}", number) or not 7 <= sum(c.isdigit() for c in number) <= 15:
             raise ValueError("Invalid callback number")
         with self.connection_factory() as conn:
@@ -182,6 +182,21 @@ class PostgresConversationRepository:
         if row is None:
             return None
         return dict(zip(("id", "action_id", "slot_id", "created_at"), row))
+
+    def resolve_service(self, spoken: str) -> dict | None:
+        """Match what the model sent to an active service by code or display name."""
+        def key(value: str) -> str:
+            return " ".join(re.sub(r"[\s_-]+", " ", value.casefold()).split())
+
+        with self.connection_factory() as conn:
+            rows = conn.execute(
+                "SELECT code, name FROM services WHERE business_id=%s AND active=TRUE ORDER BY code",
+                (self.business_id,),
+            ).fetchall()
+        for code, name in rows:
+            if key(spoken) in {key(code), key(name)}:
+                return {"code": code, "name": name}
+        return None
 
     def get_public_business_facts(self) -> str:
         """Build prompt facts from actual seeded services, not model guesses."""

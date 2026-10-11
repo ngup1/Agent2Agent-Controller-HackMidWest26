@@ -160,3 +160,38 @@ def test_unknown_interaction_is_not_created_from_caller_supplied_id():
     svc, repo, ident, chat, gate, executor = setup()
     with pytest.raises(ValueError, match="Unknown"):
         run(svc.handle_turn(uuid4(), "Book something"))
+
+
+@pytest.mark.parametrize("spoken", [
+    "Yes.", "yeah", "Yep!", "Yes, that's correct.", "yes please", "That's right", "Okay", "Sounds good, thanks",
+])
+def test_spoken_confirmations_book_once(spoken):
+    svc, repo, ident, chat, gate, executor = setup()
+    run(svc.handle_turn(ident, "Haircut please"))
+    assert "booked" in run(svc.handle_turn(ident, spoken))
+    assert len(repo.bookings) == len(gate.calls) == len(executor.calls) == 1
+
+
+@pytest.mark.parametrize("spoken", [
+    "yes but make it four people", "yeah, actually change the time", "okay wait", "yes, not Sunday though",
+    "right, no", "that's not correct", "maybe", "yesterday I called",
+])
+def test_changed_or_unclear_replies_never_confirm(spoken):
+    svc, repo, ident, chat, gate, executor = setup()
+    run(svc.handle_turn(ident, "Haircut please"))
+    run(svc.handle_turn(ident, spoken))
+    assert repo.actions == repo.bookings == {}
+    assert gate.calls == executor.calls == []
+
+
+@pytest.mark.parametrize("sent,stored,spoken", [
+    ("Haircut", "haircut", "A haircut for 1 person"),
+    ("beard trim", "beard_trim", "A beard trim for 1 person"),
+    ("Beard_Trim", "beard_trim", "A beard trim for 1 person"),
+    ("massage", "massage", "A massage for 1 person"),  # unknown: left for the gate to refuse
+])
+def test_service_is_stored_as_its_code_and_read_back_by_name(sent, stored, spoken):
+    svc, repo, ident, *_ = setup(payload={**PAYLOAD, "service": sent})
+    reply = run(svc.handle_turn(ident, "Book me in"))
+    assert reply.startswith(spoken)
+    assert repo.pending[ident]["service"] == stored

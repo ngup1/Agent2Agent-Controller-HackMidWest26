@@ -32,7 +32,11 @@ This patch is based on the user-provided `main-after-ssa001.zip`. The old 002, 0
 
 ## Neighbors: exact integration boundary
 
-The conversation service expects the gate and executor injected into the app factory:
+**Update:** `create_app()` now defaults to the real gate and calendar through
+`GateAdapter` and `BookingExecutor` in `backend/services/receptionist_runtime.py`.
+Injection, shown below, is only needed in tests.
+
+The conversation service accepts the gate and executor injected into the app factory:
 
 ```python
 app = create_app(gateway=actual_gateway, executor=actual_booking_executor)

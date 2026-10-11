@@ -1,7 +1,7 @@
 """SSA-001 FastAPI entry point, with SSA-014 /chat enabled when configured.
 
-The gate and booking executor are injected by their owning lanes. They never
-fall back to permissive fakes in the deployed application.
+The receptionist uses the real gate (SSA-010) and booking calendar (SSA-005)
+unless a test injects its own. Neither falls back to a permissive fake.
 """
 
 import psycopg
@@ -50,7 +50,7 @@ def create_app(
     from backend.database.conversation_repository import PostgresConversationRepository
     from backend.services.conversation import ConversationService
     from backend.services.receptionist_runtime import (
-        DatabaseFactsBookingChat, UnavailableExecutor, UnavailableGateway,
+        BookingExecutor, DatabaseFactsBookingChat, GateAdapter,
     )
 
     repo = repository if repository is not None else PostgresConversationRepository(settings.business_id)
@@ -75,8 +75,8 @@ def create_app(
     service = ConversationService(
         repository=repo,
         chat=chat,
-        gateway=gateway if gateway is not None else UnavailableGateway(),
-        executor=executor if executor is not None else UnavailableExecutor(),
+        gateway=gateway if gateway is not None else GateAdapter(settings),
+        executor=executor if executor is not None else BookingExecutor(settings),
     )
     app.state.conversation_service = service
     app.state.conversation_repository = repo
