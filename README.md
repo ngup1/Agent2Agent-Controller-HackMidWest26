@@ -12,7 +12,7 @@ The demo runs on an Akamai Linode with Akamai Managed PostgreSQL at
 | Path | What it is |
 |---|---|
 | [`/healthz`](https://172-232-10-159.sslip.io/healthz) | Health check, including the managed database |
-| [`/dashboard`](https://172-232-10-159.sslip.io/dashboard) | Staff review queue; asks for the dashboard password |
+| [`/dashboard`](https://172-232-10-159.sslip.io/dashboard) | Incoming request board, case pages and shop settings; asks for the dashboard password |
 | `POST /chat` | Text entry to the receptionist |
 | `POST /voice/incoming`, `wss://…/voice/stream` | Twilio phone path (SSA-023) |
 
@@ -42,7 +42,7 @@ contract is in the Demo scope section of [spec.md](spec.md).
 - **Where they live:** the menu is the `services` table and the rules are the
   `business_policies.booking_rules` JSON (inherited column name). The gate reads
   both on every decision, so an edit takes effect on the next order with no
-  restart. A dashboard settings page to edit them is stage 2 and is not built.
+  restart. Staff edit them at `/dashboard/settings` (see the dashboard section).
 - **Earlier salon calls** stay in the database and on the dashboard. They are not
   used as precedent, because retrieval only considers `place_order` proposals.
 
@@ -188,11 +188,51 @@ An unset password disables the dashboard with HTTP 503; missing or wrong
 credentials return HTTP 401. Dashboard routes share a router-level password check.
 Use loopback for local development and HTTPS for any remote deployment.
 
-The dashboard reads up to 100 reviews (pending first, oldest pending first),
-the latest 20 calls, and the latest 20 bookings. Its queue refreshes every five
-seconds; history and case pages refresh on page reload. Case links use the action
-ID and show the transcript, proposal, rule checks, Jev evidence, precedents,
-callback number and persisted booking result.
+**Request board (issue #38).** The top bar reads "Incoming Request Logs - <shop
+name>". The page shows the latest 100 calls in three columns and refreshes every
+five seconds from `/dashboard/board`:
+
+| Column | Colour | A call is here when | Card shows |
+|---|---|---|---|
+| Requests in progress | Blue | It has no outcome yet and had activity in the last 10 minutes | Caller name or number and "In progress"; not clickable |
+| Fulfilled requests | Green | An order record exists | Caller and "Order placed: items · total" |
+| Fulfilled requests | Grey | Staff denied it | "Declined by staff. No order placed." |
+| Needs action | Red | A staff review is pending, or an approved or allowed order failed to execute | Caller and the reasons that sent it to staff |
+
+Calls are never marked as ended, so "in progress" is inferred: a call with no
+outcome leaves the board after 10 minutes without a new transcript line. The
+caller number is the one Twilio reports for phone calls; text and API calls have
+none, so the card shows the name the caller gave, or "Unknown caller". Neither is
+verified.
+
+Green, grey and red cards link to the case page by action ID. It shows, in
+order: caller information, the result (with Approve / Deny while pending), why
+the case needs attention, the rules that took effect, the assessment (Jev and
+similar past calls, each labelled fake or live), and the transcript.
+
+**Settings (`/dashboard/settings`).** Staff change the shop name and edit the
+menu and rules as one JSON document:
+
+```json
+{"menu": {"tofu": {"name": "Tofu banh mi", "price": 8.0}},
+ "rules": {"max_order_total_auto": 100.0,
+           "keyword_rules": [{"label": "Allergy mention", "keywords": ["allergy"]}]}}
+```
+
+The server validates the whole document (valid JSON, exactly `menu` and `rules`,
+item codes in lowercase letters, digits and underscores, prices from 0 to 10000,
+and the same rule checks the gate applies) and saves nothing if any part fails.
+A saved change applies to the next call: the name appears in the top bar and the
+phone greeting, and the receptionist and gate read the new menu and rules. An
+item left out of the menu is deactivated, not deleted. "Restore banh mi example"
+does what `seed --reset` does. Saves are JSON POSTs behind the dashboard
+password, like staff decisions.
+
+Verified: the offline tests and the PostgreSQL tests (board query, save, gate
+reading the saved menu, restore), and a local run against PostgreSQL with
+synthetic cases. On the deployed host (2026-10-11) the board, a fulfilled case, a
+pending case and the settings page loaded with the stored calls; saving settings
+was not exercised there.
 
 Case evidence follows the SSA-010 handoff: `policy_snapshot.checks`,
 `policy_snapshot.precedents`, `policy_snapshot.providers`, and the `JEV_`
@@ -202,8 +242,8 @@ Provider modes are historical evidence, not proof of a successful live call.
 
 To try the UI without a database, set `DASHBOARD_PREVIEW=true` and restart the
 server. This is an explicit, synthetic, read-only preview with no database access.
-It includes a group review and a clarification case; the second is linked under
-recent calls. Turn preview off before database integration. Database errors
+It includes a pending review, an in-progress call and a clarification case; the
+last is reachable only by its case URL. Turn preview off before database integration. Database errors
 return HTTP 503 with a safe message and never fall back to synthetic records.
 
 In database mode, pending cases offer Approve and book / Deny with an optional

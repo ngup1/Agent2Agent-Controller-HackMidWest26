@@ -1,0 +1,16 @@
+{% macro card(item) %}
+{% if item.kind == "in_progress" %}<div class="card in_progress"><strong>{{ item.who }}</strong><span class="state">In progress</span>
+<span class="muted">{{ item.channel }} · started {{ item.created_at|business_time }}</span></div>
+{% else %}<a class="card {{ item.kind }}" href="/dashboard/cases/{{ item.action_id }}"><strong>{{ item.who }}</strong>{{ item.statement }}
+{% if item.detail %}<span class="muted">Requested: {{ item.detail }}</span>{% endif %}
+<span class="muted">{{ item.channel }} · {{ item.created_at|business_time }}</span></a>{% endif %}
+{% endmacro %}
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>
+{% else %}<div class="board">
+<section class="column in_progress" aria-labelledby="col-progress"><h2 id="col-progress"><span class="dot"></span>Requests in progress<span class="count">{{ columns.in_progress|length }}</span></h2>
+{% for item in columns.in_progress %}{{ card(item) }}{% else %}<p class="muted">No calls in progress.</p>{% endfor %}</section>
+<section class="column fulfilled" aria-labelledby="col-fulfilled"><h2 id="col-fulfilled"><span class="dot"></span>Fulfilled requests<span class="count">{{ columns.fulfilled|length }}</span></h2>
+{% for item in columns.fulfilled %}{{ card(item) }}{% else %}<p class="muted">No fulfilled requests yet.</p>{% endfor %}</section>
+<section class="column needs_action" aria-labelledby="col-action"><h2 id="col-action"><span class="dot"></span>Needs action<span class="count">{{ columns.needs_action|length }}</span></h2>
+{% for item in columns.needs_action %}{{ card(item) }}{% else %}<p class="muted">Nothing needs action.</p>{% endfor %}</section>
+</div>{% endif %}

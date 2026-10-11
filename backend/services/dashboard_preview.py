@@ -51,18 +51,18 @@ CASE = {
 
 
 class PreviewDashboardRepository:
-    def queue(self):
-        return [deepcopy(CASE)]
-
-    def recent(self):
-        return {"calls": [
-            {"id": INTERACTION_ID, "channel": "web", "status": "escalated",
-             "callback_number": CASE["callback_number"], "created_at": CREATED,
-             "action_id": ACTION_ID},
-            {"id": UUID("15000000-0000-4000-8000-000000000012"),
-             "channel": "api", "status": "active", "callback_number": None,
-             "created_at": CREATED, "action_id": CLARIFY_ID},
-        ], "orders": []}
+    def board(self):
+        return {"business_name": "Demo Banh Mi (sample)", "rows": [
+            {"interaction_id": INTERACTION_ID, "channel": "web", "created_at": CREATED,
+             "callback_number": CASE["callback_number"], "recent": False,
+             "action_id": ACTION_ID, "payload": deepcopy(CASE["payload"]),
+             "state": "pending_review", "review_status": "pending",
+             "reasons": deepcopy(CASE["reasons"]), "order_id": None},
+            {"interaction_id": UUID("15000000-0000-4000-8000-000000000012"),
+             "channel": "phone", "created_at": CREATED, "callback_number": "+15555550199",
+             "recent": True, "action_id": None, "payload": None, "state": None,
+             "review_status": None, "reasons": None, "order_id": None},
+        ]}
 
     def case(self, action_id):
         if action_id == ACTION_ID:

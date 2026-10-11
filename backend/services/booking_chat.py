@@ -30,7 +30,8 @@ PROPOSE_ORDER_TOOL = {
                                    "for example [\"grilled_pork\", \"grilled_pork\"] for two.",
                 },
                 "customer_name": {"type": "string"},
-                "callback_number": {"type": "string", "description": "Optional customer-provided contact phone"},
+                # No callback_number here: offering the field made the live model ask
+                # callers for a number. The phone transport supplies the caller ID.
             },
             "required": ["items", "customer_name"],
             "additionalProperties": False,

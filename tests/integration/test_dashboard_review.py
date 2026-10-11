@@ -42,8 +42,11 @@ def test_approve_once_and_read_saved_order(database):
     assert case["order"]["total_usd"] == 120
     assert [item["code"] for item in case["order"]["items"]] == ["party_tray", "party_tray"]
     assert len(case["transcript"]) == 1
-    assert len(repo.recent()["orders"]) == 1
-    assert repo.queue()[0]["review_status"] == "approved"
+    board = repo.board()
+    assert board["business_name"] == "Demo Banh Mi"
+    row, = [row for row in board["rows"] if row["action_id"] == action]
+    assert row["review_status"] == "approved" and row["total_usd"] == 120
+    assert row["order_name"] == "Test guest" and row["recent"] is True
     assert database.conn.execute("SELECT count(*) FROM orders WHERE action_id=%s", (action,)).fetchone()[0] == 1
 
 
@@ -98,3 +101,29 @@ def test_manual_case_command_is_repeatable_and_results_are_persisted(database):
     with database.connect() as conn:
         create_cases(conn, DEMO_BUSINESS_ID, "test-batch")
     assert case_status(database.conn, DEMO_BUSINESS_ID, "test-batch") == rows
+
+
+def test_settings_save_changes_what_the_gate_and_receptionist_read_and_can_be_restored(database):
+    from decimal import Decimal
+    from backend.database.gate_store import GateStore
+    from backend.database.shop_settings import ShopSettingsStore
+    from backend.services.shop_settings import config_text, example, parse_config
+
+    store = ShopSettingsStore(Settings(), database.connect)
+    assert store.load() == example()
+    menu, rules = parse_config(config_text(
+        {"tofu": {"name": "Tofu banh mi", "price": "8.25"}, "pho": {"name": "Pho", "price": "12"}},
+        {"max_order_total_auto": 40, "keyword_rules": []}))
+    assert store.save("Pho Real", menu, rules) is True
+    saved = store.load()
+    assert saved["name"] == "Pho Real" and saved["rules"] == {"max_order_total_auto": 40.0, "keyword_rules": []}
+    assert saved["menu"] == {"pho": {"name": "Pho", "price": Decimal("12.00")},
+                             "tofu": {"name": "Tofu banh mi", "price": Decimal("8.25")}}
+    assert GateStore(database.connect).menu(DEMO_BUSINESS_ID) == saved["menu"]
+    assert DashboardRepository(Settings(), database.connect).board()["business_name"] == "Pho Real"
+    # Removed items are deactivated, not deleted.
+    assert database.conn.execute("SELECT active FROM services WHERE code='party_tray'").fetchone() == (False,)
+    store.restore_example()
+    restored = store.load()
+    assert restored["name"] == "Demo Banh Mi" and restored["rules"] == example()["rules"]
+    assert set(restored["menu"]) == set(example()["menu"])  # the added item is switched off again
