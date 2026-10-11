@@ -41,9 +41,23 @@ def fake_assess(action, transcript_excerpt, rule_checks, precedents):
     }
 
 
-def live_retrieve(business_id, text, exclude_interaction_id):
-    # SSA-008 replaces this body with its retrieve_precedents call.
-    raise ProviderUnavailable("Precedent retrieval (SSA-008) is not integrated yet")
+def live_retrieve(business_id, text, exclude_interaction_id, *, action_id=None, settings=None):
+    """SSA-008: read the trusted action context and exclude its entire call.
+
+    The three-argument gateway callback is retained for injected fake tests; only
+    the live path supplies the server-owned action id. Missing context fails closed.
+    """
+    if action_id is None:
+        raise ProviderUnavailable("A persisted action is required for live retrieval")
+    settings = settings or Settings.from_env()
+    if business_id != settings.business_id:
+        raise ProviderUnavailable("Business does not match server configuration")
+    from backend.database.repository import TranscriptRepository
+    from backend.memory.precedents import PrecedentService
+    service = PrecedentService(TranscriptRepository(), settings)
+    # The service loads the canonical caller text + call ID from PostgreSQL,
+    # never trusting model-provided text, caller-supplied business, or call ID.
+    return service.retrieve_for_action(action_id)
 
 
 def live_assess(action, transcript_excerpt, rule_checks, precedents, settings=None):
@@ -151,6 +165,12 @@ def evaluate(action_id: UUID, *, now: datetime | None = None, retrieve=None, ass
         "retrieval": "injected" if retrieve else settings.retrieval_mode or "unset",
         "jev": "injected" if assess else settings.jev_mode or "unset",
     }
+    if retrieve is None and settings.retrieval_mode == "live":
+        # A live pgvector service may deliberately use fake embeddings offline.
+        # Record the actual vector source so the dashboard cannot imply live Akamai.
+        snapshot["providers"]["embeddings"] = settings.embedding_mode
+    if retrieve is None and settings.retrieval_mode == "live":
+        retrieve = partial(live_retrieve, action_id=action_id, settings=settings)
     retrieve = retrieve or RETRIEVERS[settings.retrieval_mode]
     if assess is None and settings.jev_mode == "live":
         assess = partial(live_assess, settings=settings)
