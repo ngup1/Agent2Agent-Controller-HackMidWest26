@@ -14,10 +14,10 @@ from psycopg.types.json import Jsonb
 from backend.config import Settings
 
 
-def _connect():
+def _connect(settings: Settings | None = None):
     import psycopg
     from pgvector.psycopg import register_vector
-    conn = psycopg.connect(Settings.from_env().database_url, connect_timeout=10)
+    conn = psycopg.connect((settings or Settings.from_env()).database_url, connect_timeout=10)
     try:
         register_vector(conn)
     except Exception:

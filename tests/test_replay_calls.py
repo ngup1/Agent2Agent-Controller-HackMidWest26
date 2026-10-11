@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from backend.config import DEMO_BUSINESS_ID
+from backend.services.conversation_tokens import conversation_token_for
 from backend.scripts.check_embeddings import check_separation
 from backend.scripts.replay_calls import (
     HttpReplayTransport, RecordedCall, load_recordings, replay_call,
@@ -57,12 +58,21 @@ def test_transport_posts_turn_and_review_to_application():
         requests.append(request)
         return httpx.Response(200)
     with httpx.Client(base_url="http://test", transport=httpx.MockTransport(handle)) as client:
-        transport = HttpReplayTransport(client, "/reviews/{review_id}/{decision}")
+        transport = HttpReplayTransport(client, DEMO_BUSINESS_ID, "test-only-long-replay-session-secret")
         transport.turn("call", "Synthetic text")
         transport.decide({"id": "action", "review_id": "review"}, "denied")
     assert requests[0].url.path == "/chat"
-    assert json.loads(requests[0].content) == {"interaction_id": "call", "text": "Synthetic text"}
-    assert requests[1].url.path == "/reviews/review/deny"
+    assert json.loads(requests[0].content) == {
+        "interaction_id": "call", "text": "Synthetic text",
+        "conversation_token": conversation_token_for("test-only-long-replay-session-secret", DEMO_BUSINESS_ID, "call"),
+    }
+    assert requests[1].url.path == "/dashboard/cases/action/decision"
+    assert json.loads(requests[1].content) == {"decision": "deny"}
+
+
+def test_replay_requires_the_app_session_secret():
+    with pytest.raises(ValueError, match="CHAT_SESSION_SECRET"):
+        HttpReplayTransport(Mock(), DEMO_BUSINESS_ID, "")
 
 
 def test_calibration_flags_routine_denied_overlap():

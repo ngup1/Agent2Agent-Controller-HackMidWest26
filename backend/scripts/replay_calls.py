@@ -14,6 +14,7 @@ import httpx
 
 from backend.config import Settings
 from backend.database.replay import ReplayRepository
+from backend.services.conversation_tokens import conversation_token_for
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,8 @@ def load_recordings(directory: Path) -> list[RecordedCall]:
                     or not isinstance(segment.get("content"), str) or not segment["content"].strip()):
                 raise ValueError(f"{path.name}: invalid transcript segment")
         turns = tuple(s["content"] for s in transcript if s["speaker"] == "caller")
+        if any(len(turn) > 4000 for turn in turns):
+            raise ValueError(f"{path.name}: each caller turn must contain at most 4000 characters")
         if not turns or len("\n".join(turns)) > 20000:
             raise ValueError(f"{path.name}: caller text must contain 1-20000 characters")
         recordings.append(RecordedCall(identifier, data["category"], turns, data["outcome"], tuple(transcript)))
@@ -63,19 +66,27 @@ def load_recordings(directory: Path) -> list[RecordedCall]:
 
 
 class HttpReplayTransport:
-    """Route adapter; --review-path is explicit until the dashboard lane lands."""
+    """Trusted local replay using the app's business and session secret.
 
-    def __init__(self, client: httpx.Client, review_path: str):
-        self.client, self.review_path = client, review_path
+    ReplayRepository reserves a stable API interaction in the app's database.
+    Sign its token using the same helper as /chat; do not bypass route validation.
+    """
+
+    def __init__(self, client: httpx.Client, business_id, secret: str):
+        if len(secret) < 24:
+            raise ValueError("Replay requires the app's CHAT_SESSION_SECRET (24+ characters)")
+        self.client, self.business_id, self.secret = client, business_id, secret
 
     def turn(self, interaction_id, text):
-        response = self.client.post("/chat", json={"interaction_id": str(interaction_id), "text": text})
+        token = conversation_token_for(self.secret, self.business_id, interaction_id)
+        response = self.client.post("/chat", json={
+            "interaction_id": str(interaction_id), "conversation_token": token, "text": text,
+        })
         response.raise_for_status()
 
     def decide(self, action, outcome):
-        path = self.review_path.format(review_id=action["review_id"], action_id=action["id"],
-                                       decision="approve" if outcome == "approved" else "deny")
-        response = self.client.post(path, json={"status": outcome})
+        path = f"/dashboard/cases/{action['id']}/decision"
+        response = self.client.post(path, json={"decision": "approve" if outcome == "approved" else "deny"})
         response.raise_for_status()
 
 
@@ -117,16 +128,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path("fixtures/calls"))
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--review-path", required=True,
-                        help="Dashboard POST path with {review_id}, {action_id}, and/or {decision}")
     args = parser.parse_args()
     settings = Settings.from_env()
     try:
         recordings = load_recordings(args.directory)
-        password = os.getenv("REPLAY_DASHBOARD_PASSWORD")
+        password = os.getenv("REPLAY_DASHBOARD_PASSWORD") or settings.dashboard_password
+        if any(call.outcome is not None for call in recordings) and not password:
+            raise ValueError("Replay of reviewed calls requires DASHBOARD_PASSWORD or REPLAY_DASHBOARD_PASSWORD")
         auth = httpx.BasicAuth("staff", password) if password else None
         with httpx.Client(base_url=args.base_url, auth=auth, timeout=60) as client:
-            transport = HttpReplayTransport(client, args.review_path)
+            transport = HttpReplayTransport(client, settings.business_id, settings.chat_session_secret)
             repository = ReplayRepository()
             for recording in recordings:
                 print(f"{recording.id}: {replay_call(recording, settings.business_id, repository, transport)}")

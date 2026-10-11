@@ -4,12 +4,6 @@
 establishes the FastAPI/PostgreSQL foundation for the demo in [spec.md](spec.md).
 The shared application package is `backend/`; see [the agent guide](docs/agent-guide.md).
 
-SSA-008 adds a dedicated [precedent retrieval service](docs/ssa-008-precedents.md)
-with explicit live/fake embedding modes and recording export/replay commands.
-Live embedding and basic chat requests were verified against the workshop endpoint
-on 2026-10-10. Recorded-call calibration and conversation/dashboard replay
-integration are still pending. Supply the team key locally; it is not in the repository.
-
 ## Local setup
 
 Requires Docker with Compose and permission to access its daemon:
@@ -93,6 +87,78 @@ unset, integration tests explicitly skip. No test makes paid inference calls.
 
 ## Shared lane contracts
 
+### SSA-015 dashboard checkpoint 3
+
+The Jinja2 shell is at `/dashboard`. Set `DASHBOARD_PASSWORD` in the server
+environment or a private `.env`, then restart Uvicorn. The browser's Basic Auth
+dialog accepts any username (use `staff`) and the configured shared password.
+An unset password disables the dashboard with HTTP 503; missing or wrong
+credentials return HTTP 401. Dashboard routes share a router-level password check.
+Use loopback for local development and HTTPS for any remote deployment.
+
+The dashboard reads up to 100 reviews (pending first, oldest pending first),
+the latest 20 calls, and the latest 20 bookings. Its queue refreshes every five
+seconds; history and case pages refresh on page reload. Case links use the action
+ID and show the transcript, proposal, rule checks, Jev evidence, precedents,
+callback number and persisted booking result.
+
+Case evidence follows the SSA-010 handoff: `policy_snapshot.checks`,
+`policy_snapshot.precedents`, `policy_snapshot.providers`, and the `JEV_`
+entries in `reasons`. Clarification cases show absent providers as not checked.
+Chat mode is not recorded in that contract, so it is explicitly shown as such.
+Provider modes are historical evidence, not proof of a successful live call.
+
+To try the UI without a database, set `DASHBOARD_PREVIEW=true` and restart the
+server. This is an explicit, synthetic, read-only preview with no database access.
+It includes a group review and a clarification case; the second is linked under
+recent calls. Turn preview off before database integration. Database errors
+return HTTP 503 with a safe message and never fall back to synthetic records.
+
+In database mode, pending cases offer Approve and book / Deny with an optional
+staff note. Both POST through the protected dashboard router. Approval and the
+SSA-005 booking connector share one transaction, holding the action and review
+locks until commit. Denial records `denied` and `rejected` without execution.
+An identical repeat is a no-op; a conflicting later decision returns HTTP 409.
+The page reloads persisted evidence after submission and only shows a booking
+confirmation when a booking row exists. Uncertain responses require a manual
+reload, never an automatic decision retry.
+
+The connector files were reused unchanged from `origin/main` at `961801c`
+(SSA-005, PR #30), without merging unrelated lanes over local dashboard edits.
+The gate is a separate integration dependency: a pending review must already
+exist before the dashboard can decide it.
+
+Validation: all 57 tests passed against the local Compose PostgreSQL/pgvector
+container, including all ten database tests. The dashboard database tests
+cover approval, denial, concurrent approval and rollback on execution error, plus
+readback through the dashboard queries. They use isolated temporary schemas;
+do not point them at a shared live database. Cloud integration, live providers,
+and a browser click-through with persisted reviews remain unverified.
+For PowerShell, explicitly configure the local test target before running tests:
+
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql://demo:demo@127.0.0.1:5432/demo'
+.\.venv\Scripts\python.exe -m pytest -q -rs
+```
+
+Starting the database alone does not set `TEST_DATABASE_URL` in your terminal.
+Without it, the ten database tests intentionally skip.
+
+For a local browser check, initialize and seed the local database, then run
+`python -m backend.scripts.dashboard_cases create`. This creates two explicitly
+synthetic pending cases named APPROVE and DENY. It bypasses the gate and calls no
+providers. Re-running preserves the same cases and their decisions. Use
+`--batch local-2` for a new pair when needed. The command rejects non-local
+database hosts.
+
+Run Uvicorn with `DASHBOARD_PREVIEW=false` and a configured password. Approve the
+APPROVE case and deny the DENY case. Then run
+`python -m backend.scripts.dashboard_cases status` to verify the first has
+`review=approved, action=executed, bookings=1` and the second has
+`review=denied, action=rejected, bookings=0`. Set `DATABASE_URL` to
+`postgresql://demo:demo@127.0.0.1:5432/demo` for these commands on the host.
+Preview remains read only and is never used as a fallback when the database fails.
+
 `Settings.from_env().business_id` and `app.state.settings.business_id` resolve
 `DEMO_BUSINESS_ID` from server configuration. Adapters must use this identity,
 never a caller-supplied business ID. The seed uses the same setting.
@@ -108,7 +174,9 @@ never a caller-supplied business ID. The seed uses the same setting.
 Save text before calling the embedding provider so a provider failure cannot erase
 the transcript. Attachment returns `True` for a new embedding, `False` if already
 attached; it preserves the first vector/model. Vectors have 1,024 dimensions.
-`search_similar` still searches raw transcripts; reviewed precedent retrieval is SSA-008.
+`search_similar` searches raw transcripts. SSA-008 uses `PrecedentService` and
+`search_precedents` to retrieve only staff-decided calls; see
+[retrieval and replay](docs/ssa-008-precedents.md).
 
 An action starts as `proposed` with a generated `idempotency_key`. Recording a
 decision stores gate evidence without changing state or executing anything.
@@ -130,6 +198,56 @@ Calendar columns are `services.code/name/duration_minutes/price_usd/active`,
 business IDs. `bookings.action_id` is unique. Capacity enforcement and execution
 belong to SSA-005; the table alone does not enforce workflow authorization.
 
+## Gate (SSA-010)
+
+`backend.services.gateway.evaluate(action_id)` decides one `proposed` booking and
+returns a `GateDecision` (`decision`, `risk_level`, `reasons`, `policy_snapshot`,
+plus `to_dict()`) in the spec's Demo scope shape. It books nothing. In one
+transaction it writes one `security_decisions` row and moves the action:
+
+| Decision | Action state | Also written |
+|---|---|---|
+| `allow` | `allowed` | — |
+| `escalate` | `pending_review` | a `pending` `human_reviews` row; `interactions.status = 'escalated'` |
+| `clarify` | `rejected` | — |
+
+Calling it again for a decided action returns the stored decision and writes nothing.
+
+Order: rules (`backend/policy/booking_rules.py`), then precedent, then Jev. A
+`clarify` stops after the rules and calls no provider. Notice under 30 minutes is
+`clarify` with `SLOT_UNAVAILABLE`; 30–119 minutes is `escalate` with `SHORT_NOTICE`.
+A party below one reuses `PARTY_TOO_LARGE`, because the contract has no other code.
+A start time without an offset is read as business-local time.
+
+Besides `rules` and `checks`, `policy_snapshot` holds `precedents` (up to three,
+nearest first, approved or denied), `providers` (the mode each provider ran in) and
+`thresholds`. Jev's verdict, confidence, question and mode are in its reason's evidence.
+
+`RETRIEVAL_MODE` and `JEV_MODE` select `fake`, `live`, or unset:
+
+- `RETRIEVAL_MODE=fake`: real PostgreSQL/pgvector retrieval with deterministic
+  fake embeddings. Staff-decided calls are eligible immediately. Vectors and
+  evidence are labelled fake; this does not demonstrate semantic quality.
+- `JEV_MODE=fake`: the explicit Jev stand-in returns no concern.
+  `.env.example` selects both fake modes for local work.
+- `JEV_MODE=live`: a real Jev decision through the TypeSafe SDK
+  (`backend/providers/jev.py`). It needs `TYPESAFE_API_KEY`; without the key, or on
+  a timeout, SDK error or unexpected answer, the gate escalates with
+  `JEV_UNAVAILABLE`. See [provider notes](docs/provider-compatibility.md).
+- `RETRIEVAL_MODE=live`: workshop embeddings and real pgvector retrieval through
+  `PrecedentService.retrieve_for_action(action_id)`. Missing access, invalid
+  vectors or retrieval errors escalate with `RETRIEVAL_UNAVAILABLE`. No fake
+  provider is substituted.
+- `EMBEDDING_MODE` selects embeddings for standalone service users only; the
+  gate always uses `RETRIEVAL_MODE`. Fake/live vectors have different model tags.
+  Use separate demo datasets when switching modes; cached vectors are not replaced.
+- unset, a provider error, or a malformed result: `escalate` with risk `unknown`.
+
+Expected provider shapes: `retrieve(business_id, text, exclude_interaction_id)`
+returns `[{interaction_id, summary, outcome, similarity}]`, and
+`assess(action, transcript_excerpt, rule_checks, precedents)` returns
+`{verdict, confidence, question}`.
+
 ## Managed database and integration status
 
 The [Akamai memory lab](https://github.com/akamai-developers/akamai-workshop-hackmidwest/blob/e362ae2/docs/02_memory.md)
@@ -149,13 +267,47 @@ The inherited Akamai adapter is in `backend/providers/akamai.py`; imports from
 are retained. A live adapter requires a key and propagates failures; it does not
 substitute a fake client.
 
-| Component | Status in SSA-001 |
+| Component | Status |
 |---|---|
-| PostgreSQL/pgvector and health endpoint | Real persistence; integration tests require a local database |
+| PostgreSQL/pgvector and health endpoint (SSA-001) | Real persistence; integration tests require a local database |
+| Mock calendar & execution connector (SSA-005) | Implemented (`backend/connectors/booking.py`); verified via 4 integration tests |
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Jev, receptionist, voice, gate, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
+| Gate (SSA-010) | Rules, precedent retrieval and persistence integrated; fake/live modes labelled; live retrieval rehearsal pending |
+| Precedent (SSA-008) | Real pgvector and application replay tested with fake inference; recordings/calibration pending |
+| Jev (SSA-009) | Live through the TypeSafe SDK when `JEV_MODE=live` and a key is set; four live calls verified locally; one question only |
+| Booking calendar (SSA-005) | Real persistence; see the section below |
+| Receptionist (SSA-014) | Wired to the real gate and calendar; verified with a fake chat model only, live chat unverified |
+| Dashboard (SSA-015) | See the SSA-015 section above |
+| Voice | Unfinished; assigned to the other demo issues |
+
+## Testing SSA-005: Booking Calendar & Execution Connector
+
+SSA-005 provides in-process booking calendar queries and atomic execution in `backend/connectors/booking.py`:
+- `list_slots(service, day)`: Queries open 30-minute slots and computes available remaining capacity (`capacity - booked`).
+- `execute(action_id)` (aliased as `book(action_id)`): Idempotently validates action state (`allowed` or `pending_review` with `approved`), row-locks slot capacity (`FOR UPDATE`), and writes the booking.
+
+### How to test:
+
+1. Ensure the PostgreSQL container is running:
+   ```bash
+   docker compose up -d db
+   # Note: If port 5432 is already occupied on your host, use DATABASE_PORT=5433 docker compose up -d db
+   ```
+
+2. Point to the test database and run integration tests:
+   ```bash
+   export TEST_DATABASE_URL="postgresql://demo:demo@localhost:5432/demo" # or port 5433
+   pytest tests/integration/test_booking.py -v
+   ```
+
+3. What the tests verify:
+   - **Idempotency:** Executing the same action twice yields exactly one booking row.
+   - **Capacity Guard:** Booking a full slot fails cleanly with state `failed` and reason `SLOT_FULL`.
+   - **State Gate:** Actions that are `proposed`, `rejected`, or awaiting review cannot be executed.
+   - **Durability:** Bookings persist in PostgreSQL across connections.
+
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;
@@ -163,3 +315,19 @@ a running Uvicorn server returned HTTP 200 with `database: reachable`.
 `docker compose config -q` passed. Compose startup remains unverified because this
 workspace cannot access the Docker daemon socket. Managed database and live
 inference calls were not run.
+
+## SSA-014 receptionist (in-progress)
+
+`POST /chat` and `handle_turn(interaction_id, text)` are now implemented. The route
+requires a server-owned `CHAT_SESSION_SECRET` (24+ characters) and live
+`OPENAI_API_KEY`; neither is committed. Run `python3 -m backend.scripts.init_db`
+to apply the new `005_ssa014.sql` pending-proposal table after SSA-001 migrations.
+A confirmed proposal now goes through the real gate (SSA-010) and, on `allow`,
+the booking calendar (SSA-005); tests may still inject their own. Set
+`RETRIEVAL_MODE` and `JEV_MODE`, or every bookable request goes to staff review.
+A spoken yes such as "yeah" or "yes, that's correct" confirms; a reply containing
+a change ("yes, but…") clears the proposal. The service the model sends is matched
+to a seeded service by code or display name and stored as its code. No live
+Akamai chat call has been verified yet.
+See [SSA-014 integration guide](docs/ssa-014-integration.md) for wiring, tests,
+and safe fallback behavior.

@@ -68,7 +68,12 @@ matched proposal's caller text, not generated explanations.
 
 ## Provider modes and checks
 
-`EMBEDDING_MODE=live` is the default and uses the existing
+`RETRIEVAL_MODE` controls embeddings for gateway calls. `EMBEDDING_MODE`
+controls standalone `PrecedentService` callers; it does not override the gate.
+The same application connection factory is shared by conversation, retrieval,
+review, and execution, including tests with an isolated database schema.
+
+`EMBEDDING_MODE=live` is the standalone default and uses the existing
 `AkamaiService.embed_transcript` adapter. Missing access, invalid dimensions,
 nonfinite/zero vectors, provider failures, and database failures become explicit
 unavailability. Expose `service.mode` in the dashboard provider badge; configured
@@ -108,29 +113,29 @@ and saved outcome detects changed recordings. A completed repeat run reads the
 persisted outcome and skips the call; it does not create duplicate proposals,
 embeddings, reviews, or bookings. After a database reset the same calls rebuild.
 
-The required HTTP adapter contract is:
+Replay is a trusted local operator command. Supply the same `DATABASE_URL`,
+`DEMO_BUSINESS_ID`, and `CHAT_SESSION_SECRET` as the app, plus `DASHBOARD_PASSWORD`
+(or an explicit `REPLAY_DASHBOARD_PASSWORD`). Do not share the session secret with
+callers. The CLI reserves its deterministic interaction ID in the database and
+signs its session token with the same helper used by the chat route. Ordinary
+clients still start with text only and use the server-issued ID/token.
 
-- `POST /chat` accepts `{interaction_id, text}` for that existing interaction,
-  persists the turn, and finishes its synchronous proposal/gate work before
-  replying. Replay reads outcomes from PostgreSQL, not response prose.
-- The dashboard decision route accepts POST at the explicitly supplied
-  `--review-path` template. Placeholders are `{review_id}`, `{action_id}`, and
-  `{decision}` (`approve`/`deny`). The request body includes `status`
-  (`approved`/`denied`). The route owns the normal review/execution service call.
-- If the dashboard uses HTTP Basic authentication, set
-  `REPLAY_DASHBOARD_PASSWORD`; the adapter uses username `staff`. If that lane
-  chooses a different password transport, adapt `HttpReplayTransport` to it.
-
-Example once the dashboard supplies the matching route:
+- `POST /chat` receives `{interaction_id, conversation_token, text}`. The existing
+  route checks the token, business and API channel before handling the turn.
+- `POST /dashboard/cases/{action_id}/decision` receives
+  `{"decision": "approve"}` or `{"decision": "deny"}` with staff Basic Auth.
+  The existing review service owns the decision and any booking execution.
+- No alternative replay endpoint, direct decision insert, or token bypass exists.
+  Missing local secrets are rejected before reserving an interaction. A wrong
+  secret fails with HTTP 403; an incorrect staff password fails with HTTP 401.
 
 ```bash
-python -m backend.scripts.replay_calls --base-url http://127.0.0.1:8000 \
-  --review-path '/reviews/{review_id}/{decision}'
+python -m backend.scripts.replay_calls --base-url http://127.0.0.1:8000
 ```
 
-The route template is an integration proposal, not a claim those routes already
-exist on this branch. A recorded denied call must actually reach pending review
-during replay; the script never fabricates a review to force the saved result.
+The old `--review-path` option is removed now that the dashboard route exists.
+A recorded denied call must actually reach pending review during replay; the
+script never fabricates a review to force the saved result.
 Interrupted/changed replays fail explicitly and are not automatically resent.
 Inspect them or use the demo reset flow before retrying. Recorded appointment
 times still have to be valid against the seeded calendar when replayed.
@@ -145,11 +150,27 @@ TEST_DATABASE_URL=postgresql://demo:demo@localhost:5432/demo python -m pytest -q
 
 Integration checks cover immediate denial eligibility, exclusion of undecided
 and current calls, business/model filters, distinct top-three calls, proposal
-boundaries, stored-vector reuse, and duplicate-free replay. Replay tests use an
-explicitly fake HTTP application with a real database; they do not prove the
-not-yet-integrated conversation/dashboard routes.
+boundaries, stored-vector reuse, and duplicate-free replay. Replay tests use the actual application routes, conversation service, gate,
+review service and booking connector with a real PostgreSQL/pgvector database.
+Only inference is fake. They cover approved, denied and auto-allowed calls,
+repeat invocations, session-token rejection, retrieval failures, and a dashboard
+denial becoming evidence for the next call and Jev.
 
-Verified locally on 2026-10-10 with disposable PostgreSQL 17 and pgvector 0.8.1:
+Reconciliation against `main` at `d85043c` passed **210 tests, zero skips**,
+including **37 real PostgreSQL/pgvector integration cases**. The exact command was:
+
+```bash
+TEST_DATABASE_URL=postgresql://seb@127.0.0.1:55440/ssa008_reconcile_utf8 /home/seb/projects/Agent2Agent-Controller-HackMidWest26/.venv/bin/python -m pytest -q -rs
+```
+
+This ran in the isolated SSA-008 worktree against a disposable PostgreSQL 17.6
+cluster with pgvector 0.8.1. `git diff --check` and the export, replay and embedding
+check CLI help commands also passed. No paid provider calls or cloud changes were
+made during reconciliation. Existing customer/voice work was left in its original
+checkout and is not bundled into this issue.
+
+The original PR's historical validation on 2026-10-10 used disposable PostgreSQL
+17 and pgvector 0.8.1:
 `TEST_DATABASE_URL=postgresql://seb@127.0.0.1:55438/ssa008_test .venv/bin/python -m pytest -q`
 reported **53 passed**, including regression coverage for excluding the entire
 current call through both service entry points even when it has approved/denied
@@ -177,7 +198,8 @@ the key was saved in the local gitignored `.env` with permissions `0600`; it is
 not tracked or included in the PR.
 
 Live embedding access is now verified. The team still has no recorded calls;
-recorded-call calibration, a live retrieval rehearsal, and replay through the
-actual conversation/dashboard routes remain pending. SSA-008 should not be
+recorded-call calibration and a live retrieval rehearsal remain pending.
+Replay through the actual conversation/dashboard routes is now covered with
+synthetic test inputs and fake inference; this does not replace replaying team recordings. SSA-008 should not be
 marked fully accepted until those results are recorded. Future local runs still
 need the team key supplied through the environment or a gitignored `.env` file.
