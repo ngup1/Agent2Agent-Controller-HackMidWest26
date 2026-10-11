@@ -5,6 +5,7 @@ unless a test injects its own. Neither falls back to a permissive fake.
 """
 
 import psycopg
+from functools import partial
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -19,9 +20,15 @@ def create_app(
     chat=None,
     gateway=None,
     executor=None,
+    connection_factory=None,
 ) -> FastAPI:
     app = FastAPI(title="Supervised Service Agent")
     app.state.settings = settings or Settings.from_env()
+    from backend.database.repository import _connect
+    app.state.connection_factory = (
+        connection_factory or getattr(repository, "connection_factory", None)
+        or partial(_connect, app.state.settings)
+    )
     app.include_router(dashboard_router)
 
     @app.get("/healthz")
@@ -55,7 +62,8 @@ def create_app(
         BookingExecutor, DatabaseFactsBookingChat, GateAdapter,
     )
 
-    repo = repository if repository is not None else PostgresConversationRepository(settings.business_id)
+    connect = app.state.connection_factory
+    repo = repository if repository is not None else PostgresConversationRepository(settings.business_id, connect)
     chat_ready = True
     if chat is None:
         if not settings.openai_api_key:
@@ -77,8 +85,8 @@ def create_app(
     service = ConversationService(
         repository=repo,
         chat=chat,
-        gateway=gateway if gateway is not None else GateAdapter(settings),
-        executor=executor if executor is not None else BookingExecutor(settings),
+        gateway=gateway if gateway is not None else GateAdapter(settings, connect),
+        executor=executor if executor is not None else BookingExecutor(settings, connect),
     )
     app.state.conversation_service = service
     app.state.conversation_repository = repo

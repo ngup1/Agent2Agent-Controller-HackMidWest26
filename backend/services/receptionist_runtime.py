@@ -30,7 +30,9 @@ class GateAdapter:
 
     def __init__(self, settings, connection_factory=None):
         self.settings = settings
-        self.connection_factory = connection_factory
+        from functools import partial
+        from backend.database.repository import _connect
+        self.connection_factory = connection_factory or partial(_connect, settings)
 
     async def evaluate(self, action_id):
         from backend.database.gate_store import GateStore
@@ -44,7 +46,9 @@ class BookingExecutor:
 
     def __init__(self, settings, connection_factory=None):
         self.settings = settings
-        self.connection_factory = connection_factory
+        from functools import partial
+        from backend.database.repository import _connect
+        self.connection_factory = connection_factory or partial(_connect, settings)
 
     async def execute(self, action_id):
         from backend.connectors import booking

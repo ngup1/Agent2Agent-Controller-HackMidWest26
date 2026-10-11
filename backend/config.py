@@ -1,5 +1,6 @@
 """Environment configuration; business identity belongs to the server."""
 
+import math
 import os
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -19,6 +20,7 @@ class Settings:
     openai_api_key: str = field(default="", repr=False)
     chat_model: str = "hackathon-chat"
     embedding_model: str = "hackathon-embedding"
+    embedding_mode: str = "live"
     dashboard_password: str = field(default="", repr=False)
     dashboard_preview: bool = False
     # Gate providers: "fake", "live", or "" (unset, which the gate escalates).
@@ -35,6 +37,11 @@ class Settings:
         if {self.retrieval_mode, self.jev_mode} - {"", "fake", "live"}:
             raise ValueError("RETRIEVAL_MODE and JEV_MODE must be fake, live or unset")
 
+        if self.embedding_mode not in {"fake", "live"}:
+            raise ValueError("EMBEDDING_MODE must be fake or live")
+        if not math.isfinite(self.precedent_similarity_min) or not 0 <= self.precedent_similarity_min <= 1:
+            raise ValueError("PRECEDENT_SIMILARITY_MIN must be between 0 and 1")
+
     @classmethod
     def from_env(cls):
         load_dotenv()
@@ -45,6 +52,7 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             chat_model=os.getenv("CHAT_MODEL", cls.chat_model),
             embedding_model=os.getenv("EMBEDDING_MODEL", cls.embedding_model),
+            embedding_mode=os.getenv("EMBEDDING_MODE", cls.embedding_mode).strip().lower(),
             dashboard_password=os.getenv("DASHBOARD_PASSWORD", ""),
             dashboard_preview=os.getenv("DASHBOARD_PREVIEW", "").lower() in {"1", "true", "yes"},
             retrieval_mode=os.getenv("RETRIEVAL_MODE", "").strip().lower(),

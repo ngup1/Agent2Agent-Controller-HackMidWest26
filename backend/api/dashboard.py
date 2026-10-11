@@ -50,11 +50,11 @@ def get_repository(request: Request):
     settings = request.app.state.settings
     if settings.dashboard_preview:
         return PreviewDashboardRepository()
-    return DashboardRepository(settings)
+    return DashboardRepository(settings, getattr(request.app.state, "connection_factory", None))
 
 
 def get_review_service(request: Request):
-    return ReviewService(request.app.state.settings)
+    return ReviewService(request.app.state.settings, getattr(request.app.state, "connection_factory", None))
 
 
 class DecisionInput(BaseModel):

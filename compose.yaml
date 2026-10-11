@@ -25,6 +25,7 @@ services:
       CHAT_SESSION_SECRET: ${CHAT_SESSION_SECRET:-}
       CHAT_MODEL: ${CHAT_MODEL:-hackathon-chat}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-hackathon-embedding}
+      EMBEDDING_MODE: ${EMBEDDING_MODE:-live}
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-}
       JEV_MODE: ${JEV_MODE:-}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
