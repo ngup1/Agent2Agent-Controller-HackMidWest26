@@ -6,6 +6,9 @@ A caller, or another AI agent, orders from a banh mi shop by voice or text. The 
 
 **Live demo:** call **+1 (229) 490-2249**, or open <https://172-232-10-159.sslip.io/dashboard> (asks for the staff password)
 
+user: staff
+pass: 123
+
 ## How it works
 
 ```mermaid
