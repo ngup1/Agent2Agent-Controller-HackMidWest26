@@ -143,13 +143,41 @@ The inherited Akamai adapter is in `backend/providers/akamai.py`; imports from
 are retained. A live adapter requires a key and propagates failures; it does not
 substitute a fake client.
 
-| Component | Status in SSA-001 |
+| Component | Status |
 |---|---|
-| PostgreSQL/pgvector and health endpoint | Real persistence; integration tests require a local database |
+| PostgreSQL/pgvector and health endpoint (SSA-001) | Real persistence; integration tests require a local database |
+| Mock calendar & execution connector (SSA-005) | Implemented (`backend/connectors/booking.py`); verified via 4 integration tests |
 | Offline inference tests | Explicit fake clients |
 | Akamai adapter | Reused; live calls skipped |
 | Managed database | Unavailable locally; cloud verification pending SSA-021 |
-| Jev, receptionist, voice, gate, calendar execution, dashboard | Unfinished; assigned to the other demo issues |
+| Jev, receptionist, voice, gate, dashboard | In progress / assigned to the other demo issues |
+
+## Testing SSA-005: Booking Calendar & Execution Connector
+
+SSA-005 provides in-process booking calendar queries and atomic execution in `backend/connectors/booking.py`:
+- `list_slots(service, day)`: Queries open 30-minute slots and computes available remaining capacity (`capacity - booked`).
+- `execute(action_id)` (aliased as `book(action_id)`): Idempotently validates action state (`allowed` or `pending_review` with `approved`), row-locks slot capacity (`FOR UPDATE`), and writes the booking.
+
+### How to test:
+
+1. Ensure the PostgreSQL container is running:
+   ```bash
+   docker compose up -d db
+   # Note: If port 5432 is already occupied on your host, use DATABASE_PORT=5433 docker compose up -d db
+   ```
+
+2. Point to the test database and run integration tests:
+   ```bash
+   export TEST_DATABASE_URL="postgresql://demo:demo@localhost:5432/demo" # or port 5433
+   pytest tests/integration/test_booking.py -v
+   ```
+
+3. What the tests verify:
+   - **Idempotency:** Executing the same action twice yields exactly one booking row.
+   - **Capacity Guard:** Booking a full slot fails cleanly with state `failed` and reason `SLOT_FULL`.
+   - **State Gate:** Actions that are `proposed`, `rejected`, or awaiting review cannot be executed.
+   - **Durability:** Bookings persist in PostgreSQL across connections.
+
 
 Validation of this rebuild: **20 tests passed** on Python 3.14 with real
 PostgreSQL 17.6 and pgvector 0.8.1. Both CLI setup commands ran twice successfully;
