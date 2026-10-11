@@ -7,3 +7,4 @@ openai>=1.30,<3
 httpx>=0.27,<1
 typesafe-sdk>=0.7,<1
 pytest>=8,<10
+pydantic>=2,<3

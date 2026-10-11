@@ -25,6 +25,7 @@ class Settings:
     precedent_similarity_min: float = 0.80
     typesafe_api_key: str = field(default="", repr=False)
     typesafe_model: str = ""  # empty uses the SDK default
+    chat_session_secret: str = field(default="", repr=False)
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
@@ -49,4 +50,5 @@ class Settings:
             precedent_similarity_min=float(
                 os.getenv("PRECEDENT_SIMILARITY_MIN") or cls.precedent_similarity_min
             ),
+            chat_session_secret=os.getenv("CHAT_SESSION_SECRET", ""),
         )

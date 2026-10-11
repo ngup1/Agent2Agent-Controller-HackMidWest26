@@ -22,6 +22,7 @@ services:
       DEMO_BUSINESS_ID: ${DEMO_BUSINESS_ID:-6a33f197-7784-54dd-84db-f40dce4c8733}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://ws.akamai-workshops.com/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CHAT_SESSION_SECRET: ${CHAT_SESSION_SECRET:-}
       CHAT_MODEL: ${CHAT_MODEL:-hackathon-chat}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-hackathon-embedding}
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-}
