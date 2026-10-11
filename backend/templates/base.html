@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Staff dashboard{% endblock %}</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#17332d;background:#f3f6f3}body{margin:0}
+header{background:#17332d;color:white;padding:1.5rem max(1.2rem,calc((100vw - 1100px)/2))}
+header a{color:#e5f6ec}header p{color:#c9ddd3}main{max-width:1100px;margin:1.5rem auto;padding:0 1.2rem}
+h1{font-size:clamp(1.8rem,5vw,2.6rem);margin:.6rem 0}h2{font-size:1.2rem;margin-top:0}p{line-height:1.6}
+.badge{display:inline-block;border:1px solid #729c8b;border-radius:1rem;padding:.25rem .65rem;margin:.2rem;font-size:.85rem}
+section,.notice{background:white;border:1px solid #d6e0db;border-radius:10px;padding:1.4rem;margin-bottom:1.2rem}
+.notice{border-left:5px solid #a76a19}.error{border-left:5px solid #af3737;background:#fff3f1}
+.muted{color:#51655e;font-size:.9rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1.2rem}
+a{color:#075f49;text-underline-offset:.2rem}a:focus-visible{outline:3px solid #b78010;outline-offset:4px}
+.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.93rem;text-align:left}
+th,td{padding:.85rem .65rem;border-bottom:1px solid #dfe7e1;vertical-align:top}th{background:#eef3ef}td{overflow-wrap:anywhere}
+dl{display:grid;grid-template-columns:120px 1fr;gap:.6rem}dt{color:#51655e}dd{margin:0;overflow-wrap:anywhere}
+.transcript{list-style:none;padding:0}.transcript li{padding:.85rem 0;border-bottom:1px solid #dfe7e1}
+.transcript p{white-space:pre-wrap;margin:.3rem 0}.reason{margin-bottom:.6rem}
+button{padding:.7rem 1rem;border:1px solid #8d9e95;border-radius:6px;margin-right:.5rem}button:disabled{color:#526158;background:#e8ede9}
+footer{padding:1rem 0;color:#51655e;font-size:.85rem}
+</style></head><body>
+<header><a href="/dashboard">Staff workspace</a><h1>{% block heading %}Review dashboard{% endblock %}</h1>
+<p>Review flagged calls and follow their booking results.</p>
+<div aria-label="Provider modes"><span class="badge">Chat: {{ providers.chat }}</span><span class="badge">Embeddings / retrieval: {{ providers.retrieval }}</span><span class="badge">Jev: {{ providers.jev }}</span></div></header>
+<main>
+{% if preview %}<aside class="notice"><strong>PREVIEW · Synthetic examples · Read only</strong><br>These sample calls are not database records. No bookings can be created here.</aside>{% endif %}
+{% block content %}{% endblock %}
+<footer>Provider mode describes configuration at assessment time, not proof of a successful live call. Displayed times use America/Chicago where a timezone was recorded.</footer></main>
+{% block scripts %}{% endblock %}</body></html>
