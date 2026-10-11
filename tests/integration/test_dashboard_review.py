@@ -127,3 +127,16 @@ def test_settings_save_changes_what_the_gate_and_receptionist_read_and_can_be_re
     restored = store.load()
     assert restored["name"] == "Demo Banh Mi" and restored["rules"] == example()["rules"]
     assert set(restored["menu"]) == set(example()["menu"])  # the added item is switched off again
+
+
+def test_an_ended_call_with_no_order_is_not_in_progress(database):
+    from backend.database.conversation_repository import PostgresConversationRepository
+    calls = PostgresConversationRepository(DEMO_BUSINESS_ID, database.connect)
+    ended = calls.create_interaction(DEMO_BUSINESS_ID, "phone", callback_number="+15555550101")
+    talking = calls.create_interaction(DEMO_BUSINESS_ID, "phone", callback_number="+15555550102")
+    calls.end_interaction(ended)
+    calls.end_interaction(ended)
+    rows = {row["interaction_id"]: row for row in DashboardRepository(Settings(), database.connect).board()["rows"]}
+    assert rows[ended]["recent"] is False and rows[talking]["recent"] is True
+    assert database.conn.execute(
+        "SELECT status, ended_at IS NOT NULL FROM interactions WHERE id=%s", (ended,)).fetchone() == ("completed", True)

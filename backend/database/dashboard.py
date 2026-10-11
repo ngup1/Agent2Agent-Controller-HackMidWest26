@@ -6,7 +6,8 @@ from psycopg.rows import dict_row
 
 from backend.config import Settings
 
-# A call with no outcome counts as in progress only while it is this recent.
+# A call with no outcome counts as in progress until it is marked ended, and only
+# while it is this recent (text and API calls are never marked ended).
 IN_PROGRESS_MINUTES = 10
 
 
@@ -25,7 +26,8 @@ class DashboardRepository:
             business = cur.fetchone()
             cur.execute("""
                 SELECT i.id AS interaction_id, i.channel, i.callback_number, i.created_at,
-                       COALESCE(t.last_at, i.created_at) > now() - make_interval(mins => %s) AS recent,
+                       i.ended_at IS NULL
+                         AND COALESCE(t.last_at, i.created_at) > now() - make_interval(mins => %s) AS recent,
                        a.id AS action_id, a.payload, a.state,
                        r.status AS review_status, d.reasons,
                        o.id AS order_id, o.items AS order_items, o.total_usd,
