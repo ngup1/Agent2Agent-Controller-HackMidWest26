@@ -1,0 +1,16 @@
+[
+  {
+    "type": "setup",
+    "sessionId": "VX00000000000000000000000000000000",
+    "accountSid": "AC00000000000000000000000000000000",
+    "callSid": "CA00000000000000000000000000000000",
+    "from": "+15555550123",
+    "to": "+15555550100",
+    "direction": "inbound",
+    "callType": "PSTN",
+    "callStatus": "RINGING",
+    "customParameters": {}
+  },
+  {"type": "prompt", "voicePrompt": "A haircut for", "lang": "en-US", "last": false},
+  {"type": "prompt", "voicePrompt": "A haircut for Sam tomorrow at three", "lang": "en-US", "last": true}
+]

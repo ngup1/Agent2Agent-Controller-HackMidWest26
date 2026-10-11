@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -30,6 +31,9 @@ class Settings:
     typesafe_api_key: str = field(default="", repr=False)
     typesafe_model: str = ""  # empty uses the SDK default
     chat_session_secret: str = field(default="", repr=False)
+    # SSA-023: the public host Twilio connects back to, and the echo proof mode.
+    public_host: str = ""
+    voice_echo: bool = False
 
     def __post_init__(self):
         if not self.database_url.startswith(("postgresql://", "postgres://")):
@@ -37,6 +41,8 @@ class Settings:
         if {self.retrieval_mode, self.jev_mode} - {"", "fake", "live"}:
             raise ValueError("RETRIEVAL_MODE and JEV_MODE must be fake, live or unset")
 
+        if self.public_host and not re.fullmatch(r"[A-Za-z0-9.-]+(:\d+)?", self.public_host):
+            raise ValueError("PUBLIC_HOST must be a host name without a scheme or path")
         if self.embedding_mode not in {"fake", "live"}:
             raise ValueError("EMBEDDING_MODE must be fake or live")
         if not math.isfinite(self.precedent_similarity_min) or not 0 <= self.precedent_similarity_min <= 1:
@@ -63,4 +69,6 @@ class Settings:
                 os.getenv("PRECEDENT_SIMILARITY_MIN") or cls.precedent_similarity_min
             ),
             chat_session_secret=os.getenv("CHAT_SESSION_SECRET", ""),
+            public_host=os.getenv("PUBLIC_HOST", "").strip(),
+            voice_echo=os.getenv("VOICE_ECHO", "").lower() in {"1", "true", "yes"},
         )
